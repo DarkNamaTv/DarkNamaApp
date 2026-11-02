@@ -25,7 +25,12 @@ jobs:
           java-version: '17'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          # The legacy "tools" package is no longer available from Google.
+          # Install the packages required by compileSdk 36 and AGP 8.9.2 explicitly.
+          packages: 'platform-tools platforms;android-36 build-tools;35.0.0'
+          log-accepted-android-sdk-licenses: false
 
       - name: Make gradlew executable
         run: |
@@ -66,18 +71,64 @@ jobs:
         with:
           gradle-version: wrapper
 
-      - name: Decode Keystore
+      - name: Prepare and validate release signing
+        env:
+          KEY_STORE: ${{ secrets.KEY_STORE }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          TMP_VALIDATION_PASSWORD: temporary-validation-only
         run: |
-          echo "${{ secrets.KEY_STORE }}" | base64 --decode > app/keystore.jks
-        continue-on-error: true
+          set -euo pipefail
+          missing=()
+          for name in KEY_STORE KEY_STORE_PASSWORD KEY_PASSWORD KEY_ALIAS; do
+            if [[ -z "${!name}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} )); then
+            echo "::error title=Missing Android signing secrets::Configure ${missing[*]} under Settings > Secrets and variables > Actions. KEY_STORE must contain the Base64-encoded original release keystore."
+            exit 1
+          fi
 
-      - name: Create keystore properties file
-        run: |
-          echo "storePassword=${{ secrets.KEY_STORE_PASSWORD }}" > key.properties
-          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> key.properties
-          echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> key.properties
-          echo "storeFile=keystore.jks" >> key.properties
-        continue-on-error: true
+          umask 077
+          # Accept wrapped Base64, but never ignore a decoding error or create
+          # an empty keystore when the secret is missing.
+          if ! printf '%s' "$KEY_STORE" | tr -d '[:space:]' | base64 --decode > app/keystore.jks; then
+            echo "::error title=Invalid keystore encoding::KEY_STORE must be the Base64 contents of the binary .jks/.p12 file, not its path or password."
+            exit 1
+          fi
+          if [[ ! -s app/keystore.jks ]]; then
+            echo "::error title=Empty release keystore::KEY_STORE decoded to an empty file. Upload the original release keystore as Base64."
+            exit 1
+          fi
+          # Validate the store and alias without printing secrets or certificates.
+          if ! keytool -list -keystore app/keystore.jks \
+              -storepass:env KEY_STORE_PASSWORD -alias "$KEY_ALIAS" > /dev/null; then
+            echo "::error title=Invalid release keystore::Cannot open KEY_STORE with KEY_STORE_PASSWORD and KEY_ALIAS. Check the original file, store password, and alias."
+            exit 1
+          fi
+          # Also validate the private-key password: import the key into a
+          # temporary store with a throwaway password. Nothing is printed.
+          validation_store="/tmp/darknama-signing-check.p12"
+          if ! keytool -importkeystore -noprompt \
+              -srcalias "$KEY_ALIAS" \
+              -srckeystore app/keystore.jks -srcstoretype JKS \
+              -srcstorepass:env KEY_STORE_PASSWORD -srckeypass:env KEY_PASSWORD \
+              -destkeystore "$validation_store" -deststoretype PKCS12 \
+              -deststorepass:env TMP_VALIDATION_PASSWORD \
+              -destkeypass:env TMP_VALIDATION_PASSWORD; then
+            rm -f "$validation_store"
+            echo "::error title=Invalid release key password::KEY_PASSWORD does not unlock the private key for KEY_ALIAS in KEY_STORE. Check the private-key password."
+            exit 1
+          fi
+          rm -f "$validation_store"
+
+          printf '%s\n' "storePassword=${KEY_STORE_PASSWORD//\\/\\\\}" > key.properties
+          printf '%s\n' "keyPassword=${KEY_PASSWORD//\\/\\\\}" >> key.properties
+          printf '%s\n' "keyAlias=${KEY_ALIAS//\\/\\\\}" >> key.properties
+          printf '%s\n' 'storeFile=keystore.jks' >> key.properties
+          echo 'Release keystore and alias validated successfully.'
 
       # NOTE: this step MUST run before "Build APK" so the tag can be
       # injected into the APK as versionName / versionCode.
@@ -86,10 +137,13 @@ jobs:
         run: |
           if [[ $GITHUB_EVENT_NAME == 'workflow_dispatch' ]]; then
             TAG_NAME="${{ github.event.inputs.tag }}"
-          else
+          elif [[ $GITHUB_REF == refs/tags/* ]]; then
             TAG_NAME="${GITHUB_REF#refs/tags/}"
+          else
+            # Branch pushes are test builds, not releases. Never derive an
+            # Android version from digits that happen to occur in a branch name.
+            TAG_NAME="v0.0.${GITHUB_RUN_NUMBER}"
           fi
-          # strip a leading "v" -> 2.5.0 (used for versionName inside the app)
           APP_VERSION_NAME="${TAG_NAME#v}"
           APP_VERSION_NAME="${APP_VERSION_NAME#V}"
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
@@ -98,9 +152,31 @@ jobs:
           echo "App version name: $APP_VERSION_NAME"
 
       - name: Build APK
+        id: build_apk
         run: |
-          ./gradlew assembleRelease --stacktrace -x lint \
-            -PappVersionName="${APP_VERSION_NAME}"
+          set -o pipefail
+          ./gradlew assembleRelease --stacktrace --console=plain -x lint \
+            -PappVersionName="${APP_VERSION_NAME}" 2>&1 | tee build-apk.log
+
+      - name: Report APK build errors
+        if: ${{ failure() && steps.build_apk.outcome == 'failure' }}
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          log = Path("build-apk.log").read_text(errors="replace")
+          lines = log.splitlines()
+
+          def escape(value):
+              return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+          errors = [line for line in lines if re.match(r"^e: |^FAILURE: |^Execution failed|^Caused by:|^\s*error:", line)]
+          for line in errors[:10]:
+              print(f"::error title=APK build error::{escape(line)}")
+          details = "\n".join(lines[-120:])
+          print(f"::warning title=APK build failure details::{escape(details)}")
+          PY
 
       - name: Rename APK
         run: |
@@ -110,6 +186,7 @@ jobs:
 
       - name: Create Release
         id: create_release
+        if: ${{ github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/') }}
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ env.TAG_NAME }}

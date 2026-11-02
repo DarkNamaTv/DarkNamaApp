@@ -30,6 +30,7 @@ val resolvedVersionName: String = (project.findProperty("appVersionName") as Str
 /**
  * Derive a monotonically increasing versionCode from the version name
  * (e.g. 2.3.1 -> 20301). Can also be overridden with -PappVersionCode=123.
+ * Uses Long arithmetic so large version components cannot overflow Int.
  */
 val resolvedVersionCode: Int = (project.findProperty("appVersionCode") as String?)
     ?.trim()
@@ -41,7 +42,9 @@ val resolvedVersionCode: Int = (project.findProperty("appVersionCode") as String
         val major = parts.getOrNull(0) ?: 1
         val minor = parts.getOrNull(1) ?: 0
         val patch = parts.getOrNull(2) ?: 0
-        (major * 10000) + (minor * 100) + patch
+        ((major.toLong() * 10000) + (minor.toLong() * 100) + patch.toLong())
+            .coerceIn(1, Int.MAX_VALUE.toLong())
+            .toInt()
     }
 
 android {
@@ -87,14 +90,23 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            // Move keystoreProperties declaration to correct scope
+            // Release APKs must be signed with the release keystore.
+            // If key.properties exists but its storeFile is missing, fail
+            // loudly instead of silently signing the release with the debug
+            // key (which would make the APK un-installable over updates).
             val keystorePropertiesFile = rootProject.file("key.properties")
             val keystoreProperties = Properties()
             if (keystorePropertiesFile.exists()) {
                 keystoreProperties.load(FileInputStream(keystorePropertiesFile))
             }
             val storeFilePath = keystoreProperties.getProperty("storeFile") ?: "keystore/debug.keystore"
-            signingConfig = if (file(storeFilePath).exists()) {
+            signingConfig = if (keystorePropertiesFile.exists() && !file(storeFilePath).exists()) {
+                throw GradleException(
+                    "Release signing keystore not found at '$storeFilePath' " +
+                        "(configured via key.properties). A release APK must be " +
+                        "signed with the release keystore, not the debug key."
+                )
+            } else if (file(storeFilePath).exists()) {
                 signingConfigs.getByName("release")
             } else {
                 signingConfigs.getByName("debug")

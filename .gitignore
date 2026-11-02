@@ -14,3 +14,7 @@
 .cxx
 local.properties
 .kotlin/
+
+# Local/CI signing secrets - never commit
+key.properties
+app/keystore.jks

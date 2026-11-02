@@ -2,8 +2,6 @@ name: Build and Release
 
 on:
   push:
-    branches:
-      - 'arena/38c52815-app'
     tags:
       - 'v*'
   workflow_dispatch:
@@ -79,6 +77,7 @@ jobs:
           KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          TMP_VALIDATION_PASSWORD: temporary-validation-only
         run: |
           set -euo pipefail
           missing=()
@@ -109,6 +108,21 @@ jobs:
             echo "::error title=Invalid release keystore::Cannot open KEY_STORE with KEY_STORE_PASSWORD and KEY_ALIAS. Check the original file, store password, and alias."
             exit 1
           fi
+          # Also validate the private-key password: import the key into a
+          # temporary store with a throwaway password. Nothing is printed.
+          validation_store="/tmp/darknama-signing-check.p12"
+          if ! keytool -importkeystore -noprompt \
+              -srcalias "$KEY_ALIAS" \
+              -srckeystore app/keystore.jks -srcstoretype JKS \
+              -srcstorepass:env KEY_STORE_PASSWORD -srckeypass:env KEY_PASSWORD \
+              -destkeystore "$validation_store" -deststoretype PKCS12 \
+              -deststorepass:env TMP_VALIDATION_PASSWORD \
+              -destkeypass:env TMP_VALIDATION_PASSWORD; then
+            rm -f "$validation_store"
+            echo "::error title=Invalid release key password::KEY_PASSWORD does not unlock the private key for KEY_ALIAS in KEY_STORE. Check the private-key password."
+            exit 1
+          fi
+          rm -f "$validation_store"
 
           printf '%s\n' "storePassword=${KEY_STORE_PASSWORD//\\/\\\\}" > key.properties
           printf '%s\n' "keyPassword=${KEY_PASSWORD//\\/\\\\}" >> key.properties

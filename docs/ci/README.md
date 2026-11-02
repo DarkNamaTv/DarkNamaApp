@@ -1,36 +1,44 @@
-# CI: stamping the release tag into the APK version
+# CI: Build and Release
 
-`build-appshare.yml` in this folder is the **proposed replacement** for
-`.github/workflows/build-appshare.yml`.
+`build-appshare.yml` in this folder is a copy of the active
+`.github/workflows/build-appshare.yml`. Keep the two in sync.
 
-It cannot be pushed automatically: GitHub refuses `git push` and the Contents API
-for any file under `.github/workflows/` unless the client has the `workflows`
-permission, which the Genspark GitHub App does not have.
+## Release signing secrets (required)
 
-> `! [remote rejected] ... refusing to allow a GitHub App to create or update
-> workflow '.github/workflows/build-appshare.yml' without 'workflows' permission`
+The workflow needs four repository Actions secrets to sign the release APK:
 
-## How to apply it
+| Secret | Meaning |
+|---|---|
+| `KEY_STORE` | Base64 of the original binary `.jks` (or `.p12`) keystore file |
+| `KEY_STORE_PASSWORD` | Password that opens the keystore |
+| `KEY_PASSWORD` | Password that unlocks the private key |
+| `KEY_ALIAS` | Alias of the signing key inside the keystore |
 
-1. Open <https://github.com/DaknamaTv/DarkNamaApp/edit/genspark_ai_developer/.github/workflows/build-appshare.yml>
-2. Select all, and paste the contents of `docs/ci/build-appshare.yml`.
-3. Commit to the `genspark_ai_developer` branch.
+Add them under **Settings → Secrets and variables → Actions → New repository
+secret**. The workflow validates all four before building and fails fast with a
+clear message if any is missing, malformed, or does not match the keystore.
+Never generate a new keystore for releases — keep the original one so existing
+installations can be updated.
 
-Or from a local clone (a normal user push is not restricted):
+## What the workflow does
 
-```bash
-cp docs/ci/build-appshare.yml .github/workflows/build-appshare.yml
-git add .github/workflows/build-appshare.yml
-git commit -m "ci: inject release tag as app versionName/versionCode"
-git push
-```
+1. Checks out the code and sets up JDK 17 + Android SDK (API 36).
+2. Validates the Gradle wrapper.
+3. Decodes and validates the release keystore from the four secrets.
+4. Derives the app version from the release tag.
+5. Builds the release APK with Gradle (`assembleRelease`).
+6. Renames the APK to `DarkNama-<tag>-universal.apk`.
+7. Publishes a GitHub Release with the APK attached.
 
-## What changes
+`Create Release` only runs from `master` or a `v*` tag, so branch pushes are
+test builds and never create a release.
+
+## Version stamping
 
 | | Before | After |
 |---|---|---|
 | `Get tag name` step | runs **after** `Build APK` | runs **before** `Build APK` |
-| Gradle invocation | `./gradlew assembleRelease` | `./gradlew assembleRelease -PappVersionName="${APP_VERSION_NAME}"` |
+| Gradle invocation | `./gradlew assembleRelease` | `./gradlew assembleRelease -PappVersionName=\"${APP_VERSION_NAME}\"` |
 | APK `versionName` | always the fallback (`2.1.0`) | the release tag (`v2.5.0` → `2.5.0`) |
 | APK `versionCode` | derived from fallback (`20100`) | derived from the tag (`2.5.0` → `20500`) |
 | Asset file name | `DarkNama-universal.apk` | `DarkNama-v2.5.0-universal.apk` |
@@ -55,7 +63,8 @@ val resolvedVersionName: String =
 ```
 
 `versionCode` is computed as `major * 10000 + minor * 100 + patch`
-(`2.5.0` → `20500`) and can still be overridden with `-PappVersionCode=<n>`.
+(`2.5.0` → `20500`) using Long arithmetic so large components cannot overflow,
+and can still be overridden with `-PappVersionCode=<n>`.
 
 Consumers of `BuildConfig.VERSION_NAME`:
 
