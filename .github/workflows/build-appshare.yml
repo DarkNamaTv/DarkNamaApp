@@ -25,8 +25,13 @@ jobs:
           java-version: '17'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
+        uses: android-actions/setup-android@v4
+        with:
+          # The legacy "tools" package is no longer available from Google.
+          # Install the packages required by compileSdk 36 and AGP 8.9.2 explicitly.
+          packages: 'platform-tools platforms;android-36 build-tools;35.0.0'
+          log-accepted-android-sdk-licenses: false
+          
       - name: Make gradlew executable
         run: |
           chmod +x gradlew
