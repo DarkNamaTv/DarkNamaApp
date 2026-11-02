@@ -73,18 +73,48 @@ jobs:
         with:
           gradle-version: wrapper
 
-      - name: Decode Keystore
+      - name: Prepare and validate release signing
+        env:
+          KEY_STORE: ${{ secrets.KEY_STORE }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
-          echo "${{ secrets.KEY_STORE }}" | base64 --decode > app/keystore.jks
-        continue-on-error: true
+          set -euo pipefail
+          missing=()
+          for name in KEY_STORE KEY_STORE_PASSWORD KEY_PASSWORD KEY_ALIAS; do
+            if [[ -z "${!name}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} )); then
+            echo "::error title=Missing Android signing secrets::Configure ${missing[*]} under Settings > Secrets and variables > Actions. KEY_STORE must contain the Base64-encoded original release keystore."
+            exit 1
+          fi
 
-      - name: Create keystore properties file
-        run: |
-          echo "storePassword=${{ secrets.KEY_STORE_PASSWORD }}" > key.properties
-          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> key.properties
-          echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> key.properties
-          echo "storeFile=keystore.jks" >> key.properties
-        continue-on-error: true
+          umask 077
+          # Accept wrapped Base64, but never ignore a decoding error or create
+          # an empty keystore when the secret is missing.
+          if ! printf '%s' "$KEY_STORE" | tr -d '[:space:]' | base64 --decode > app/keystore.jks; then
+            echo "::error title=Invalid keystore encoding::KEY_STORE must be the Base64 contents of the binary .jks/.p12 file, not its path or password."
+            exit 1
+          fi
+          if [[ ! -s app/keystore.jks ]]; then
+            echo "::error title=Empty release keystore::KEY_STORE decoded to an empty file. Upload the original release keystore as Base64."
+            exit 1
+          fi
+          # Validate the store and alias without printing secrets or certificates.
+          if ! keytool -list -keystore app/keystore.jks \
+              -storepass:env KEY_STORE_PASSWORD -alias "$KEY_ALIAS" > /dev/null; then
+            echo "::error title=Invalid release keystore::Cannot open KEY_STORE with KEY_STORE_PASSWORD and KEY_ALIAS. Check the original file, store password, and alias."
+            exit 1
+          fi
+
+          printf '%s\n' "storePassword=${KEY_STORE_PASSWORD//\\/\\\\}" > key.properties
+          printf '%s\n' "keyPassword=${KEY_PASSWORD//\\/\\\\}" >> key.properties
+          printf '%s\n' "keyAlias=${KEY_ALIAS//\\/\\\\}" >> key.properties
+          printf '%s\n' 'storeFile=keystore.jks' >> key.properties
+          echo 'Release keystore and alias validated successfully.'
 
       # NOTE: this step MUST run before "Build APK" so the tag can be
       # injected into the APK as versionName / versionCode.
