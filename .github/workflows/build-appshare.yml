@@ -93,8 +93,12 @@ jobs:
         run: |
           if [[ $GITHUB_EVENT_NAME == 'workflow_dispatch' ]]; then
             TAG_NAME="${{ github.event.inputs.tag }}"
-          else
+          elif [[ $GITHUB_REF == refs/tags/* ]]; then
             TAG_NAME="${GITHUB_REF#refs/tags/}"
+          else
+            # Branch pushes are test builds, not releases. Never derive an
+            # Android version from digits that happen to occur in a branch name.
+            TAG_NAME="v0.0.${GITHUB_RUN_NUMBER}"
           fi
           APP_VERSION_NAME="${TAG_NAME#v}"
           APP_VERSION_NAME="${APP_VERSION_NAME#V}"
