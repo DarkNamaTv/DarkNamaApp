@@ -102,9 +102,31 @@ jobs:
           echo "App version name: $APP_VERSION_NAME"
 
       - name: Build APK
+        id: build_apk
         run: |
-          ./gradlew assembleRelease --stacktrace -x lint \
-            -PappVersionName="${APP_VERSION_NAME}"
+          set -o pipefail
+          ./gradlew assembleRelease --stacktrace --console=plain -x lint \
+            -PappVersionName="${APP_VERSION_NAME}" 2>&1 | tee build-apk.log
+
+      - name: Report APK build errors
+        if: ${{ failure() && steps.build_apk.outcome == 'failure' }}
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          log = Path("build-apk.log").read_text(errors="replace")
+          lines = log.splitlines()
+
+          def escape(value):
+              return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+          errors = [line for line in lines if re.match(r"^e: |^FAILURE: |^Execution failed|^Caused by:|^\s*error:", line)]
+          for line in errors[:10]:
+              print(f"::error title=APK build error::{escape(line)}")
+          details = "\n".join(lines[-120:])
+          print(f"::warning title=APK build failure details::{escape(details)}")
+          PY
 
       - name: Rename APK
         run: |
@@ -114,6 +136,7 @@ jobs:
 
       - name: Create Release
         id: create_release
+        if: ${{ github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/') }}
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ env.TAG_NAME }}
