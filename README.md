@@ -1,7 +1,7 @@
 # DarkNama - Movie & TV Series Streaming Application
 
 <p align="center">
-  <img src="app/src/main/res/drawable/splash_logo.png" alt="DarkNama Logo" width="150"/>
+  <img src="darknama-banner.svg" alt="DarkNama" width="99%"/>
 </p>
 
 <div align="center">
