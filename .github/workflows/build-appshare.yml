@@ -14,6 +14,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Creating a release (and its tag for workflow_dispatch) requires write access.
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -24,8 +27,11 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
+      # v3 requests the removed legacy `tools` SDK package by default.
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
 
       - name: Make gradlew executable
         run: |
@@ -97,9 +103,22 @@ jobs:
           echo "App version name: $APP_VERSION_NAME"
 
       - name: Build APK
+        shell: bash
         run: |
+          # Preserve Gradle's exit code while surfacing compiler errors as check
+          # annotations. Raw job logs are not always available to PR reviewers.
+          set +e
           ./gradlew assembleRelease --stacktrace -x lint \
-            -PappVersionName="${APP_VERSION_NAME}"
+            -PappVersionName="${APP_VERSION_NAME}" 2>&1 | tee release-build.log
+          result=${PIPESTATUS[0]}
+          set -e
+          if [ "$result" -ne 0 ]; then
+            grep -Ei '(^e: |^.* error:| FAILED|^FAILURE:|^.*Exception:)' release-build.log \
+              | head -60 | while IFS= read -r line; do
+                echo "::error::$line"
+              done || true
+          fi
+          exit "$result"
 
       - name: Rename APK
         run: |
@@ -109,7 +128,7 @@ jobs:
 
       - name: Create Release
         id: create_release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.TAG_NAME }}
           name: Release ${{ env.TAG_NAME }}

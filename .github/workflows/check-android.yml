@@ -1,0 +1,50 @@
+name: Android checks
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+      - name: Build debug and release APKs, run unit tests
+        shell: bash
+        run: |
+          # Surface compiler/test failures as check annotations. Job log downloads
+          # are not always accessible from restricted development environments.
+          # Without the production keystore, the app uses its debug signing
+          # fallback for this release APK; only the release workflow publishes.
+          set +e
+          ./gradlew :app:assembleDebug :app:assembleRelease :app:testDebugUnitTest --stacktrace -x lint 2>&1 | tee android-check.log
+          result=${PIPESTATUS[0]}
+          set -e
+          if [ "$result" -ne 0 ]; then
+            grep -Ei '(^e: |^.* error:| FAILED|^FAILURE:|^.*AssertionError|^.*Exception:)' android-check.log \
+              | head -60 | while IFS= read -r line; do
+                echo "::error::$line"
+              done || true
+            # Include the assertion message when a JUnit test (rather than compilation) fails.
+            python3 - <<'PY'
+          import glob
+          from xml.etree import ElementTree as ET
+          for path in glob.glob('app/build/test-results/testDebugUnitTest/*.xml'):
+              for case in ET.parse(path).getroot().iter('testcase'):
+                  for failure in case.findall('failure'):
+                      message = f"{case.get('classname')}.{case.get('name')}: {failure.get('message', '')}"
+                      print('::error::' + message.replace('%', '%25').replace('\n', '%0A'))
+          PY
+          fi
+          exit "$result"
