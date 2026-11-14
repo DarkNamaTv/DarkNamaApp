@@ -1,5 +1,7 @@
 package com.dark.darknama.data.repository
 
+import android.content.Context
+
 import com.dark.darknama.data.model.Country
 import com.dark.darknama.data.model.FilterType
 import com.dark.darknama.data.model.Genre
@@ -12,8 +14,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-class SeriesRepository : BaseRepository() {
-    private val BASE_URL = "https://server-hi-speed-iran.info/api/serie/by/filtres"
+class SeriesRepository(context: Context) : BaseRepository(context) {
+    private val BASE_URL = "${com.dark.darknama.data.model.ServerSettings.DEFAULT_SERVER_1}/api/serie/by/filtres"
     
     suspend fun getSeries(page: Int = 0, genreId: Int = 0, filterType: FilterType = FilterType.DEFAULT): List<Series> {
         return withContext(Dispatchers.IO) {

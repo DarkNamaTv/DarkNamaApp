@@ -13,9 +13,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material3.Card
+import com.dark.darknama.ui.theme.GlassCard as Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
+import com.dark.darknama.ui.theme.GlassDropdownMenu as DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -27,10 +27,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.dark.darknama.data.model.FilterType
 import com.dark.darknama.data.model.Genre
+import com.dark.darknama.R
+import com.dark.darknama.navigation.tvDialogInitialFocus
+import com.dark.darknama.navigation.tvFocusItem
+import com.dark.darknama.utils.DeviceUtils
 
 @Composable
 fun GenreFilterSection(
@@ -38,17 +48,21 @@ fun GenreFilterSection(
     selectedGenreId: Int,
     selectedFilterType: FilterType,
     onGenreSelected: (Int) -> Unit,
-    onFilterTypeSelected: (FilterType) -> Unit
+    onFilterTypeSelected: (FilterType) -> Unit,
+    sortFocusRequester: FocusRequester? = null,
+    headerFocusRequester: FocusRequester? = null
 ) {
+    val isTv = DeviceUtils.isTv(LocalContext.current)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
     ) {
-        Text(
-            text = "Filters",
+        if (!isTv) Text(
+            text = stringResource(R.string.filters_title),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
         )
         
@@ -57,19 +71,25 @@ fun GenreFilterSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(if (isTv) 12.dp else 8.dp)
         ) {
             // Filter type selector on the left
             FilterTypeSelector(
                 selectedFilterType = selectedFilterType,
-                onFilterTypeSelected = onFilterTypeSelected
+                onFilterTypeSelected = onFilterTypeSelected,
+                modifier = (if (isTv && headerFocusRequester != null)
+                    Modifier.focusProperties { up = headerFocusRequester } else Modifier)
+                    .then(if (isTv && sortFocusRequester != null)
+                        Modifier.focusRequester(sortFocusRequester) else Modifier)
             )
             
             // Genre selector on the right
             GenreSelector(
                 genres = genres,
                 selectedGenreId = selectedGenreId,
-                onGenreSelected = onGenreSelected
+                onGenreSelected = onGenreSelected,
+                modifier = if (isTv && headerFocusRequester != null)
+                    Modifier.focusProperties { up = headerFocusRequester } else Modifier
             )
         }
     }
@@ -78,18 +98,23 @@ fun GenreFilterSection(
 @Composable
 fun FilterTypeSelector(
     selectedFilterType: FilterType,
-    onFilterTypeSelected: (FilterType) -> Unit
+    onFilterTypeSelected: (FilterType) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
-    
+    val openMenu = { expanded = true }
+    val isTv = DeviceUtils.isTv(LocalContext.current)
+
     Card(
-        modifier = Modifier
-            .width(150.dp)
-            .height(36.dp)
-            .clickable { expanded = true },
+        onClick = if (isTv) openMenu else null,
+        modifier = modifier.tvFocusItem("filter-sort")
+            .width(150.dp).height(36.dp)
+            .tvBringIntoViewOnFocus().tvFocusBorder(RoundedCornerShape(18.dp))
+            .then(if (isTv) Modifier else Modifier.clickable(onClick = openMenu)),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primary
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
@@ -103,18 +128,20 @@ fun FilterTypeSelector(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = when (selectedFilterType) {
-                        FilterType.DEFAULT -> "Sort: Default"
-                        FilterType.BY_YEAR -> "Sort: By Year"
-                        FilterType.BY_IMDB -> "Sort: By IMDB"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = stringResource(R.string.sort_label, stringResource(when (selectedFilterType) {
+                        FilterType.DEFAULT -> R.string.sort_default
+                        FilterType.BY_YEAR -> R.string.sort_by_year
+                        FilterType.BY_IMDB -> R.string.sort_by_imdb
+                    })),
+                    style = if (isTv) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onPrimary,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f), maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Icon(
                     imageVector = Icons.Default.ArrowDropDown,
-                    contentDescription = "Filter options",
+                    contentDescription = stringResource(R.string.filters_sort_options),
                     tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.height(16.dp)
                 )
@@ -125,21 +152,33 @@ fun FilterTypeSelector(
                 onDismissRequest = { expanded = false }
             ) {
                 DropdownMenuItem(
-                    text = { Text("Default") },
+                    text = { Text(stringResource(R.string.sort_default),
+                        color = if (selectedFilterType == FilterType.DEFAULT)
+                            MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
+                    modifier = (if (selectedFilterType == FilterType.DEFAULT)
+                        Modifier.tvDialogInitialFocus() else Modifier).tvFocusBorder(),
                     onClick = {
                         onFilterTypeSelected(FilterType.DEFAULT)
                         expanded = false
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("By Year") },
+                    text = { Text(stringResource(R.string.sort_by_year),
+                        color = if (selectedFilterType == FilterType.BY_YEAR)
+                            MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
+                    modifier = (if (selectedFilterType == FilterType.BY_YEAR)
+                        Modifier.tvDialogInitialFocus() else Modifier).tvFocusBorder(),
                     onClick = {
                         onFilterTypeSelected(FilterType.BY_YEAR)
                         expanded = false
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("By IMDB") },
+                    text = { Text(stringResource(R.string.sort_by_imdb),
+                        color = if (selectedFilterType == FilterType.BY_IMDB)
+                            MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
+                    modifier = (if (selectedFilterType == FilterType.BY_IMDB)
+                        Modifier.tvDialogInitialFocus() else Modifier).tvFocusBorder(),
                     onClick = {
                         onFilterTypeSelected(FilterType.BY_IMDB)
                         expanded = false
@@ -154,25 +193,30 @@ fun FilterTypeSelector(
 fun GenreSelector(
     genres: List<Genre>,
     selectedGenreId: Int,
-    onGenreSelected: (Int) -> Unit
+    onGenreSelected: (Int) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
-    
+    val openMenu = { expanded = true }
+    val isTv = DeviceUtils.isTv(LocalContext.current)
+
     // Find the selected genre title
     val selectedGenreTitle = if (selectedGenreId == 0) {
-        "All Genres"
+        stringResource(R.string.genre_all)
     } else {
-        genres.find { it.id == selectedGenreId }?.title ?: "All Genres"
+        genres.find { it.id == selectedGenreId }?.title ?: stringResource(R.string.genre_all)
     }
     
     Card(
-        modifier = Modifier
-            .width(150.dp)
-            .height(36.dp)
-            .clickable { expanded = true },
+        onClick = if (isTv) openMenu else null,
+        modifier = modifier.tvFocusItem("filter-genre")
+            .width(150.dp).height(36.dp)
+            .tvBringIntoViewOnFocus().tvFocusBorder(RoundedCornerShape(18.dp))
+            .then(if (isTv) Modifier else Modifier.clickable(onClick = openMenu)),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondary
+            containerColor = MaterialTheme.colorScheme.secondary,
+            contentColor = MaterialTheme.colorScheme.onSecondary
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
@@ -187,13 +231,15 @@ fun GenreSelector(
             ) {
                 Text(
                     text = selectedGenreTitle,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = if (isTv) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSecondary,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f), maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Icon(
                     imageVector = Icons.Default.ArrowDropDown,
-                    contentDescription = "Genre options",
+                    contentDescription = stringResource(R.string.filters_genre_options),
                     tint = MaterialTheme.colorScheme.onSecondary,
                     modifier = Modifier.height(16.dp)
                 )
@@ -204,7 +250,10 @@ fun GenreSelector(
                 onDismissRequest = { expanded = false }
             ) {
                 DropdownMenuItem(
-                    text = { Text("All Genres") },
+                    text = { Text(stringResource(R.string.genre_all), color = if (selectedGenreId == 0)
+                        MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
+                    modifier = (if (selectedGenreId == 0) Modifier.tvDialogInitialFocus()
+                        else Modifier).tvFocusBorder(),
                     onClick = {
                         onGenreSelected(0)
                         expanded = false
@@ -213,7 +262,10 @@ fun GenreSelector(
                 
                 genres.forEach { genre ->
                     DropdownMenuItem(
-                        text = { Text(genre.title) },
+                        text = { Text(genre.title, color = if (genre.id == selectedGenreId)
+                            MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
+                        modifier = (if (genre.id == selectedGenreId) Modifier.tvDialogInitialFocus()
+                            else Modifier).tvFocusBorder(),
                         onClick = {
                             onGenreSelected(genre.id)
                             expanded = false

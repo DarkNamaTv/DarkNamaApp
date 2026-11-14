@@ -2,12 +2,12 @@
 
 package com.dark.darknama.screens
 
-import android.content.Intent
-import android.net.Uri
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FormatColorFill
 import androidx.compose.material.icons.filled.Info
@@ -26,13 +27,19 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.TextFields
-import androidx.compose.material3.AlertDialog
+import com.dark.darknama.ui.theme.GlassAlertDialog as AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.activity.ComponentActivity
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,33 +50,32 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dark.darknama.BuildConfig
 import com.dark.darknama.R
 import com.dark.darknama.components.SettingsNavigationCard
+import com.dark.darknama.components.tvBringIntoViewOnFocus
+import com.dark.darknama.components.settingsFocusBorder
+import com.dark.darknama.components.tvFocusBorder
+import com.dark.darknama.ui.theme.GlassCard as Card
+import com.dark.darknama.data.model.AppFont
+import com.dark.darknama.data.model.EnglishFontType
 import com.dark.darknama.data.model.FontSettings
 import com.dark.darknama.data.model.FontType
 import com.dark.darknama.data.model.SubtitleSettings
 import com.dark.darknama.data.model.VideoPlayerSettings
 import com.dark.darknama.navigation.AppScreens
+import com.dark.darknama.navigation.tvFocusItem
+import com.dark.darknama.navigation.tvDialogInitialFocus
+import com.dark.darknama.ui.settings.ServerSettingsViewModel
+import com.dark.darknama.ui.settings.UpdateViewModel
 import com.dark.darknama.ui.theme.ThemeManager
 import com.dark.darknama.ui.theme.ThemeMode
 import com.dark.darknama.ui.theme.ThemeSettings
+import com.dark.darknama.ui.theme.VisualStyle
+import com.dark.darknama.utils.DeviceUtils
 import com.dark.darknama.utils.LanguageUtils
 import com.dark.darknama.utils.StorageUtils
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import java.net.URL
-
-@Serializable
-data class GitHubRelease(
-    val tag_name: String,
-    val name: String,
-    val html_url: String
-)
 
 /**
  * Settings hub.
@@ -86,6 +92,11 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val themeManager = remember { ThemeManager(context) }
+    val serverViewModel: ServerSettingsViewModel = viewModel()
+    val serverSettings by serverViewModel.settings.collectAsState()
+    val updates: UpdateViewModel = viewModel(viewModelStoreOwner = context as ComponentActivity)
+    val updateState by updates.state.collectAsState()
+    val automaticUpdates by updates.automaticChecks.collectAsState()
 
     // Re-read the persisted settings on every recomposition of this screen so
     // the summary lines stay correct after returning from a sub-page.
@@ -96,23 +107,7 @@ fun SettingsScreen(
     val fontSettings = remember(refreshKey) { StorageUtils.loadFontSettings(context) }
 
     var showResetDialog by remember { mutableStateOf(false) }
-    var showUpdateDialog by remember { mutableStateOf(false) }
     var showClearWatchedEpisodesDialog by remember { mutableStateOf(false) }
-    var latestVersionUrl by remember { mutableStateOf("") }
-    var isCheckingUpdate by remember { mutableStateOf(false) }
-    var watchedEpisodesCacheSize by remember { mutableStateOf(0L) }
-
-    val json = Json { ignoreUnknownKeys = true }
-
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        watchedEpisodesCacheSize = try {
-            val file = java.io.File(context.filesDir, "watched_episodes.json")
-            if (file.exists()) file.length() else 0L
-        } catch (e: Exception) {
-            Log.e("SettingsScreen", "Error calculating cache size", e)
-            0L
-        }
-    }
 
     // Reset all settings to defaults
     fun resetToDefaults() {
@@ -122,6 +117,8 @@ fun SettingsScreen(
 
         StorageUtils.saveSubtitleSettings(context, SubtitleSettings.getDefaultSettings(context))
         StorageUtils.saveVideoPlayerSettings(context, VideoPlayerSettings.DEFAULT)
+        serverViewModel.reset()
+        updates.setAutomaticChecks(true)
 
         val defaultFont = FontSettings.DEFAULT
         StorageUtils.saveFontSettings(context, defaultFont)
@@ -134,66 +131,10 @@ fun SettingsScreen(
     fun clearWatchedEpisodes() {
         try {
             StorageUtils.clearAllWatchedEpisodes(context)
-            watchedEpisodesCacheSize = 0L
             Toast.makeText(context, context.getString(R.string.watched_cache_cleared), Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Log.e("SettingsScreen", "Error clearing watched episodes", e)
             Toast.makeText(context, context.getString(R.string.error_clearing_cache), Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    fun isVersionNewer(currentVersion: String, latestVersion: String): Boolean {
-        return try {
-            val currentParts = currentVersion.removePrefix("v").split(".").map { it.toIntOrNull() ?: 0 }
-            val latestParts = latestVersion.removePrefix("v").split(".").map { it.toIntOrNull() ?: 0 }
-            for (i in 0 until maxOf(currentParts.size, latestParts.size)) {
-                val c = currentParts.getOrElse(i) { 0 }
-                val l = latestParts.getOrElse(i) { 0 }
-                if (l > c) return true
-                if (l < c) return false
-            }
-            false
-        } catch (e: Exception) {
-            Log.e("SettingsScreen", "Error comparing versions", e)
-            false
-        }
-    }
-
-    fun checkForUpdates() {
-        isCheckingUpdate = true
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val url = URL("https://api.github.com/repos/DarknamaTv/DarkNamaApp/releases")
-                val connection = url.openConnection()
-                connection.setRequestProperty("User-Agent", "DarkNama-App")
-                val response = connection.getInputStream().bufferedReader().use { it.readText() }
-
-                val releases = json.decodeFromString<List<GitHubRelease>>(response)
-                if (releases.isNotEmpty()) {
-                    val latestRelease = releases.first()
-                    val currentVersion = "v${BuildConfig.VERSION_NAME}"
-                    withContext(Dispatchers.Main) {
-                        isCheckingUpdate = false
-                        if (isVersionNewer(currentVersion, latestRelease.tag_name)) {
-                            latestVersionUrl = latestRelease.html_url
-                            showUpdateDialog = true
-                        } else {
-                            Toast.makeText(context, context.getString(R.string.app_up_to_date), Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        isCheckingUpdate = false
-                        Toast.makeText(context, context.getString(R.string.unable_check_updates), Toast.LENGTH_SHORT).show()
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("SettingsScreen", "Error checking for updates", e)
-                withContext(Dispatchers.Main) {
-                    isCheckingUpdate = false
-                    Toast.makeText(context, context.getString(R.string.error_check_updates), Toast.LENGTH_SHORT).show()
-                }
-            }
         }
     }
 
@@ -203,23 +144,42 @@ fun SettingsScreen(
         ThemeMode.DARK -> stringResource(R.string.theme_dark)
         ThemeMode.SYSTEM -> stringResource(R.string.theme_system)
     }
-    val fontLabel = when (fontSettings.fontType) {
-        FontType.DEFAULT -> stringResource(R.string.font_system_default)
-        FontType.VAZIRMATN -> stringResource(R.string.font_vazirmatn)
-    }
+    // The summary describes the choice actually applied to the app's language.
+    val fontLabel = stringResource(when (val active =
+        fontSettings.forLanguage(LanguageUtils.getSavedLanguage(context))) {
+        is AppFont.Persian -> when (active.type) {
+            FontType.DEFAULT -> R.string.font_system_default
+            FontType.VAZIRMATN -> R.string.font_vazirmatn
+        }
+        is AppFont.English -> when (active.type) {
+            EnglishFontType.DEFAULT -> R.string.font_system_default
+            EnglishFontType.INTER -> R.string.font_inter
+            EnglishFontType.POPPINS -> R.string.font_poppins
+            EnglishFontType.MONTSERRAT -> R.string.font_montserrat
+            EnglishFontType.NUNITO -> R.string.font_nunito
+            EnglishFontType.LATO -> R.string.font_lato
+        }
+    })
     val playerSummary = stringResource(
         R.string.player_settings_summary,
         videoPlayerSettings.seekTimeSeconds,
         subtitleSettings.textSize.toInt()
     )
+    val serverLabel = stringResource(when (serverSettings.currentServer) {
+        2 -> R.string.server_2
+        3 -> R.string.server_3
+        else -> R.string.server_1
+    })
+    val serverSummary = if (serverSettings.automatic)
+        stringResource(R.string.server_auto_summary, serverLabel)
+    else serverLabel
 
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        contentPadding = PaddingValues(bottom = if (DeviceUtils.isTv(context)) 32.dp else 0.dp)
     ) {
         // ---------- Header ----------
-        item {
+        item(key = "settings-header") {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -229,6 +189,7 @@ fun SettingsScreen(
                 Text(
                     text = stringResource(R.string.settings),
                     style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f)
                 )
 
@@ -241,7 +202,8 @@ fun SettingsScreen(
                         (context as? android.app.Activity)?.recreate()
                     },
                     interactionSource = langInteraction,
-                    modifier = Modifier.size(48.dp)
+                    modifier = Modifier.tvFocusItem("settings-language")
+                        .size(48.dp).tvBringIntoViewOnFocus().tvFocusBorder(CircleShape)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Language,
@@ -259,7 +221,8 @@ fun SettingsScreen(
                     IconButton(
                         onClick = { navController.navigate(AppScreens.Favorites.route) },
                         interactionSource = favInteraction,
-                        modifier = Modifier.size(48.dp)
+                        modifier = Modifier.tvFocusItem("settings-favorites")
+                            .size(48.dp).tvBringIntoViewOnFocus().tvFocusBorder(CircleShape)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Favorite,
@@ -275,91 +238,134 @@ fun SettingsScreen(
         }
 
         // ---------- Theme settings -> own page ----------
-        item {
+        item(key = "settings-theme") {
             SettingsNavigationCard(
                 icon = Icons.Default.FormatColorFill,
                 title = stringResource(R.string.theme_settings),
-                summary = themeModeLabel,
-                onClick = { navController?.navigate(AppScreens.ThemeSettings.route) }
+                summary = stringResource(R.string.theme_summary, themeModeLabel,
+                    stringResource(when (themeSettings.style) {
+                        VisualStyle.DEFAULT -> R.string.style_default
+                        VisualStyle.GLASS -> R.string.style_glass
+                        VisualStyle.NEON_GLASS -> R.string.style_neon_glass
+                    })),
+                onClick = { navController?.navigate(AppScreens.ThemeSettings.route) },
+                modifier = Modifier.tvFocusItem("settings-theme", initial = true)
             )
             Spacer(modifier = Modifier.height(12.dp))
         }
 
         // ---------- Player & subtitle settings -> own page ----------
-        item {
+        item(key = "settings-player") {
             SettingsNavigationCard(
                 icon = Icons.Default.Subtitles,
                 title = stringResource(R.string.video_player_settings),
                 summary = playerSummary,
-                onClick = { navController?.navigate(AppScreens.PlayerSettings.route) }
+                onClick = { navController?.navigate(AppScreens.PlayerSettings.route) },
+                modifier = Modifier.tvFocusItem("settings-player")
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
+        item(key = "settings-server") {
+            SettingsNavigationCard(
+                icon = Icons.Default.Dns,
+                title = stringResource(R.string.server_settings),
+                summary = serverSummary,
+                onClick = { navController?.navigate(AppScreens.ServerSettings.route) },
+                modifier = Modifier.tvFocusItem("settings-server")
             )
             Spacer(modifier = Modifier.height(12.dp))
         }
 
         // ---------- Font settings -> own page ----------
-        item {
+        item(key = "settings-font") {
             SettingsNavigationCard(
                 icon = Icons.Default.TextFields,
                 title = stringResource(R.string.font_settings),
                 summary = fontLabel,
-                onClick = { navController?.navigate(AppScreens.FontSettings.route) }
+                onClick = { navController?.navigate(AppScreens.FontSettings.route) },
+                modifier = Modifier.tvFocusItem("settings-font")
             )
             Spacer(modifier = Modifier.height(12.dp))
         }
 
         // ---------- Episode marks cache ----------
-        item {
+        item(key = "settings-episodes") {
             SettingsNavigationCard(
                 icon = Icons.Default.Check,
                 title = stringResource(R.string.episodes_cache),
-                summary = stringResource(
-                    R.string.cache_size,
-                    if (watchedEpisodesCacheSize > 0)
-                        stringResource(R.string.cache_bytes, watchedEpisodesCacheSize.toInt())
-                    else
-                        stringResource(R.string.cache_empty)
-                ),
-                onClick = { showClearWatchedEpisodesDialog = true }
+                summary = stringResource(R.string.cache_clear_hint),
+                onClick = { showClearWatchedEpisodesDialog = true },
+                modifier = Modifier.tvFocusItem("settings-episodes-cache")
             )
             Spacer(modifier = Modifier.height(12.dp))
         }
 
         // ---------- About ----------
-        item {
+        item(key = "settings-about") {
             SettingsNavigationCard(
                 icon = Icons.Default.Info,
                 title = stringResource(R.string.about),
                 summary = stringResource(R.string.about_description),
-                onClick = { navController?.navigate(AppScreens.About.route) }
+                onClick = { navController?.navigate(AppScreens.About.route) },
+                modifier = Modifier.tvFocusItem("settings-about")
             )
             Spacer(modifier = Modifier.height(12.dp))
         }
 
         // ---------- Check for updates ----------
-        item {
+        item(key = "settings-updates") {
             SettingsNavigationCard(
                 icon = Icons.Default.Download,
                 title = stringResource(R.string.check_updates),
-                summary = if (isCheckingUpdate)
+                summary = if (updateState.checking)
                     stringResource(R.string.checking_updates)
                 else
                     stringResource(R.string.current_version, BuildConfig.VERSION_NAME),
-                onClick = { if (!isCheckingUpdate) checkForUpdates() }
+                onClick = { updates.checkForUpdates() },
+                modifier = Modifier.tvFocusItem("settings-check-updates")
             )
             Spacer(modifier = Modifier.height(12.dp))
         }
 
+        // ---------- Automatic launch checks (one attempt per 12 hours) ----------
+        item(key = "settings-automatic-checks") {
+            val interaction = remember { MutableInteractionSource() }
+            val focused by interaction.collectIsFocusedAsState()
+            Card(onClick = { updates.setAutomaticChecks(!automaticUpdates) },
+                interactionSource = interaction,
+                modifier = Modifier.tvFocusItem("settings-auto-updates")
+                    .fillMaxWidth().tvBringIntoViewOnFocus().settingsFocusBorder(focused),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Row(Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(stringResource(R.string.update_auto_checks),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface)
+                        Text(stringResource(R.string.update_auto_checks_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = automaticUpdates, onCheckedChange = null)
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
         // ---------- Reset to defaults ----------
-        item {
+        item(key = "settings-reset") {
             SettingsNavigationCard(
                 icon = Icons.Default.Refresh,
                 title = stringResource(R.string.reset_defaults),
                 summary = stringResource(R.string.reset_defaults_hint),
-                onClick = { showResetDialog = true }
+                onClick = { showResetDialog = true },
+                modifier = Modifier.tvFocusItem("settings-reset")
             )
         }
 
-        item { Spacer(modifier = Modifier.height(24.dp)) }
+        item(key = "settings-bottom-space") { Spacer(modifier = Modifier.height(24.dp)) }
     }
 
     // ---------- Dialogs ----------
@@ -372,12 +378,13 @@ fun SettingsScreen(
                 TextButton(onClick = {
                     resetToDefaults()
                     showResetDialog = false
-                }) {
+                }, modifier = Modifier.tvFocusBorder(CircleShape)) {
                     Text(stringResource(R.string.reset))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showResetDialog = false }) {
+                TextButton(onClick = { showResetDialog = false },
+                    modifier = Modifier.tvDialogInitialFocus().tvFocusBorder(CircleShape)) {
                     Text(stringResource(R.string.cancel))
                 }
             }
@@ -393,37 +400,17 @@ fun SettingsScreen(
                 TextButton(onClick = {
                     clearWatchedEpisodes()
                     showClearWatchedEpisodesDialog = false
-                }) {
+                }, modifier = Modifier.tvFocusBorder(CircleShape)) {
                     Text(stringResource(R.string.clear_all))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showClearWatchedEpisodesDialog = false }) {
+                TextButton(onClick = { showClearWatchedEpisodesDialog = false },
+                    modifier = Modifier.tvDialogInitialFocus().tvFocusBorder(CircleShape)) {
                     Text(stringResource(R.string.cancel))
                 }
             }
         )
     }
 
-    if (showUpdateDialog) {
-        AlertDialog(
-            onDismissRequest = { showUpdateDialog = false },
-            title = { Text(text = stringResource(R.string.update_available_title)) },
-            text = { Text(stringResource(R.string.update_available_message)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(latestVersionUrl))
-                    context.startActivity(intent)
-                    showUpdateDialog = false
-                }) {
-                    Text(stringResource(R.string.download))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showUpdateDialog = false }) {
-                    Text(stringResource(R.string.later))
-                }
-            }
-        )
-    }
 }

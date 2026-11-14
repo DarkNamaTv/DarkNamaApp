@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,7 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Send
-import androidx.compose.material3.Card
+import com.dark.darknama.ui.theme.GlassCard as Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,6 +45,11 @@ import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.dark.darknama.R
+import com.dark.darknama.navigation.tvFocusItem
+import com.dark.darknama.components.tvBringIntoViewOnFocus
+import com.dark.darknama.components.tvFocusBorder
+import com.dark.darknama.utils.DeviceUtils
+import androidx.compose.foundation.shape.CircleShape
 
 @Composable
 fun AboutScreen(navController: NavController?) {
@@ -60,10 +66,12 @@ fun AboutScreen(navController: NavController?) {
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = { navController?.popBackStack() }) {
+            IconButton(onClick = { navController?.popBackStack() },
+                modifier = Modifier.tvFocusItem("about-back", initial = true)
+                    .tvFocusBorder(CircleShape)) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back"
+                    contentDescription = stringResource(R.string.back)
                 )
             }
             
@@ -145,7 +153,9 @@ fun AboutScreen(navController: NavController?) {
                             .build(),
                         contentDescription = "DarkNama Website",
                         modifier = Modifier
+                            .tvFocusItem("about-website-banner")
                             .fillMaxWidth()
+                            .tvFocusBorder(RoundedCornerShape(12.dp))
                             .clip(RoundedCornerShape(12.dp))
                             .clickable {
                                 try {
@@ -168,6 +178,8 @@ fun AboutScreen(navController: NavController?) {
                         color = MaterialTheme.colorScheme.primary,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
+                            .tvFocusItem("about-website-link")
+                            .tvFocusBorder(RoundedCornerShape(8.dp))
                             .clickable {
                                 try {
                                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://darknama.pages.dev/"))
@@ -218,20 +230,42 @@ fun AboutScreen(navController: NavController?) {
                         text = "Telegram Channel",
                         url = "https://t.me/DarkNama_TV"
                     )
-                    
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
-                    // Thanks to H3dev Link
-                    LinkItem(
-                        icon = Icons.Default.Send,
-                        text = "Thanks to H3dev",
-                        url = "https://t.me/irdevs_dns"
-                    )
                 }
             }
             
             Spacer(modifier = Modifier.height(24.dp))
-            
+
+            // Attribution also covers optional fonts when the user supplies
+            // their original files; do not imply they are bundled by default.
+            // TV viewers can navigate to each informational paragraph and
+            // scroll it into view even though there are no links below them.
+            Text(
+                text = stringResource(R.string.about_font_license),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = attributionFocusModifier(DeviceUtils.isTv(context))
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = stringResource(R.string.about_english_font_license),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = attributionFocusModifier(DeviceUtils.isTv(context))
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = stringResource(R.string.about_english_font_files),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = attributionFocusModifier(DeviceUtils.isTv(context))
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             // Copyright
             Text(
                 text = "© ${java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)} DarkNama. All rights reserved.",
@@ -242,6 +276,12 @@ fun AboutScreen(navController: NavController?) {
         }
     }
 }
+
+@Composable
+private fun attributionFocusModifier(isTv: Boolean): Modifier =
+    if (isTv) Modifier.fillMaxWidth().tvBringIntoViewOnFocus()
+        .tvFocusBorder(RoundedCornerShape(8.dp)).focusable()
+    else Modifier.fillMaxWidth()
 
 @Composable
 fun LinkItem(
@@ -255,7 +295,9 @@ fun LinkItem(
     
     Row(
         modifier = Modifier
+            .tvFocusItem("about-link-$url")
             .fillMaxWidth()
+            .tvFocusBorder(RoundedCornerShape(8.dp))
             .clickable {
                 try {
                     val intent = if (isEmail) {

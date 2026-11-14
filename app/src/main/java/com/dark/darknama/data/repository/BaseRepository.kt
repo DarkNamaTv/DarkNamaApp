@@ -1,63 +1,36 @@
 package com.dark.darknama.data.repository
 
+import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-open class BaseRepository {
+open class BaseRepository(context: Context) {
+    // Timeouts are per attempt; callTimeout caps the complete failover (including probes).
     protected val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(4, TimeUnit.SECONDS)
+        .readTimeout(6, TimeUnit.SECONDS)
+        .callTimeout(45, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
+        .addInterceptor(ApiFailoverInterceptor(ServerSettingsRepository.get(context), ServerSwitchEvents::announce))
         .build()
-    
-    protected val API_KEY = "4F5A9C3D9A86FA54EACEDDD635185"
-    
-    // Helper servers array
-    protected val helperServers = arrayOf(
-        "https://hostinnegar.com",
-        "https://windowsdiba.info"
-    )
-    
+
+    protected val API_KEY = ApiConfig.KEY
+
     protected suspend fun executeRequest(
         primaryUrl: String,
         requestBuilder: (String) -> Request
-    ): String {
-        return withContext(Dispatchers.IO) {
-            // First, try the primary server
-            try {
-                val primaryRequest = requestBuilder(primaryUrl)
-                client.newCall(primaryRequest).execute().use { response ->
-                    if (response.isSuccessful) {
-                        return@withContext response.body?.string()
-                            ?: throw Exception("Empty response body from primary server")
-                    } else {
-                        throw Exception("Primary server returned error: ${response.code}")
-                    }
-                }
-            } catch (primaryException: Exception) {
-                // If primary server fails, try helper servers
-                for (helperServer in helperServers) {
-                    try {
-                        // Replace the host in the URL with the helper server
-                        val helperUrl = primaryUrl.replace(Regex("^https?://[^/]+"), helperServer)
-                        val helperRequest = requestBuilder(helperUrl)
-                        client.newCall(helperRequest).execute().use { response ->
-                            if (response.isSuccessful) {
-                                return@withContext response.body?.string()
-                                    ?: throw Exception("Empty response body from helper server")
-                            }
-                        }
-                    } catch (helperException: Exception) {
-                        // Continue to next helper server
-                        continue
-                    }
-                }
-                
-                // If all servers fail, throw the original exception
-                throw primaryException
-            }
+    ): String = withContext(Dispatchers.IO) {
+        val request = requestBuilder(primaryUrl).newBuilder()
+            .tag(CatalogueApiCall::class.java, CatalogueApiCall)
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw IOException("Catalogue API returned HTTP ${response.code}")
+            response.body?.string()?.takeIf { it.isNotBlank() }
+                ?: throw IOException("Empty catalogue API response")
         }
     }
 }

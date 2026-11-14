@@ -25,7 +25,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
+import androidx.compose.foundation.shape.CircleShape
+import com.dark.darknama.R
+import com.dark.darknama.navigation.tvFocusItem
+import androidx.compose.ui.res.stringResource
+import com.dark.darknama.ui.theme.GlassCard as Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -65,18 +69,20 @@ fun ExpandableText(
             IconButton(
                 onClick = {
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    val clip = android.content.ClipData.newPlainText("Description", text)
+                    val clip = android.content.ClipData.newPlainText(
+                        context.getString(R.string.description_clipboard_label), text)
                     clipboard.setPrimaryClip(clip)
                     
                     // Show a toast to indicate success
-                    android.widget.Toast.makeText(context, "Description copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+                    android.widget.Toast.makeText(context, R.string.description_copied,
+                        android.widget.Toast.LENGTH_SHORT).show()
                 },
-                modifier = Modifier
-                    .padding(start = 8.dp)
+                modifier = Modifier.tvFocusItem("description-copy")
+                    .padding(start = 8.dp).tvFocusBorder(CircleShape)
             ) {
                 Icon(
                     imageVector = Icons.Default.ContentCopy,
-                    contentDescription = "Copy description",
+                    contentDescription = stringResource(R.string.copy_description),
                     tint = MaterialTheme.colorScheme.primary
                 )
             }
@@ -85,8 +91,9 @@ fun ExpandableText(
         if (showReadMore || expanded) {
             // Glass-like button for Show More/Show Less
             Card(
-                modifier = Modifier
+                modifier = Modifier.tvFocusItem("description-toggle")
                     .padding(top = 8.dp)
+                    .tvFocusBorder(RoundedCornerShape(16.dp))
                     .clickable { expanded = !expanded }
                     .clip(RoundedCornerShape(16.dp))
                     .zIndex(1f),
@@ -103,7 +110,8 @@ fun ExpandableText(
                         .padding(vertical = 8.dp)
                 ) {
                     Text(
-                        text = if (expanded) "Show Less" else "Show More",
+                        text = stringResource(if (expanded) R.string.description_show_less
+                            else R.string.description_show_more),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold

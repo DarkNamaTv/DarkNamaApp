@@ -1,5 +1,7 @@
 package com.dark.darknama.data.repository
 
+import android.content.Context
+
 import com.dark.darknama.data.model.Episode
 import com.dark.darknama.data.model.Season
 import com.dark.darknama.data.model.Source
@@ -11,8 +13,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-class SeasonsRepository : BaseRepository() {
-    private val BASE_URL = "https://server-hi-speed-iran.info/api/season/by/serie"
+class SeasonsRepository(context: Context) : BaseRepository(context) {
+    private val BASE_URL = "${com.dark.darknama.data.model.ServerSettings.DEFAULT_SERVER_1}/api/season/by/serie"
     
     suspend fun getSeasons(seriesId: Int): List<Season> {
         return withContext(Dispatchers.IO) {
@@ -90,14 +92,7 @@ class SeasonsRepository : BaseRepository() {
         for (i in 0 until sourcesArray.length()) {
             try {
                 val sourceObj = sourcesArray.getJSONObject(i)
-                sources.add(
-                    Source(
-                        id = sourceObj.optInt("id", 0),
-                        quality = sourceObj.optString("quality", "Unknown"),
-                        type = sourceObj.optString("type", "Unknown"),
-                        url = sourceObj.optString("url", "")
-                    )
-                )
+                sources.add(MediaSourceParser.parse(sourceObj))
             } catch (e: Exception) {
                 // Skip sources that fail to parse
                 continue

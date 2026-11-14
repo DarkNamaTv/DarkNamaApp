@@ -3,7 +3,6 @@
 package com.dark.darknama.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +21,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -38,9 +40,9 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarBorder
-import androidx.compose.material3.AlertDialog
+import com.dark.darknama.ui.theme.GlassAlertDialog as AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.dark.darknama.ui.theme.GlassCard as Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -50,6 +52,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -62,6 +65,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -76,13 +80,20 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.dark.darknama.R
 import com.dark.darknama.VideoPlayerActivity
-import com.dark.darknama.components.SettingsIconButton
+import com.dark.darknama.components.MainSectionHeader
+import com.dark.darknama.components.TvRefreshButton
+import com.dark.darknama.components.tvFocusBorder
+import com.dark.darknama.components.goldFocus
+import com.dark.darknama.components.settingsFocusBorder
+import com.dark.darknama.components.tvBringIntoViewOnFocus
 import com.dark.darknama.data.model.TvBrowseMode
 import com.dark.darknama.data.model.TvChannel
 import com.dark.darknama.data.model.favoriteKey
 import com.dark.darknama.data.repository.IptvRepository
 import com.dark.darknama.ui.tv.LiveTvViewModel
 import com.dark.darknama.utils.DeviceUtils
+import com.dark.darknama.navigation.tvDialogInitialFocus
+import com.dark.darknama.navigation.tvFocusItem
 
 /**
  * Live TV screen.
@@ -105,55 +116,35 @@ fun LiveTvScreen(
     var showCategoryPicker by remember { mutableStateOf(false) }
     var showVpnHelpDialog by remember { mutableStateOf(false) }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        // ---------- Header: title + settings gear ----------
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.LiveTv,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(26.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.live_tv),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Help (?) button - shows VPN hint popup
+    if (isTv) {
+        TvLiveTvContent(viewModel, navController, context,
+            onHelp = { showVpnHelpDialog = true },
+            onCountryPicker = { viewModel.ensureCountryListLoaded(); showCountryPicker = true },
+            onCategoryPicker = { viewModel.ensureCategoryListLoaded(); showCategoryPicker = true })
+    } else {
+        val phoneHeader: @Composable () -> Unit = {
+        Column {
+        MainSectionHeader(title = stringResource(R.string.live_tv),
+            navController = navController, titleIcon = Icons.Default.LiveTv,
+            actions = {
+                TvRefreshButton(onClick = viewModel::retry)
+                // Keep the VPN help action accessible with the remote.
                 val helpInteractionSource = remember { MutableInteractionSource() }
                 val isHelpFocused by helpInteractionSource.collectIsFocusedAsState()
                 IconButton(
                     onClick = { showVpnHelpDialog = true },
                     interactionSource = helpInteractionSource,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .border(
-                            width = if (isHelpFocused) 2.dp else 0.dp,
-                            color = if (isHelpFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                            shape = CircleShape
-                        )
+                    modifier = Modifier.tvFocusItem("tv-help")
+                        .size(if (isTv) 48.dp else 40.dp)
+                        .settingsFocusBorder(isHelpFocused, CircleShape)
                 ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.HelpOutline,
+                    Icon(Icons.AutoMirrored.Filled.HelpOutline,
                         contentDescription = stringResource(R.string.tv_vpn_help_title),
-                        tint = if (isHelpFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp)
-                    )
+                        tint = if (isHelpFocused) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp))
                 }
-                SettingsIconButton(navController = navController)
-            }
-        }
+            })
 
         // ---------- Browse mode selector ----------
         // Horizontally scrollable so the extra "Favorites" chip always fits,
@@ -166,6 +157,7 @@ fun LiveTvScreen(
           item {
             // Favorites (starred channels)
             FilterChip(
+                modifier = Modifier.tvFocusItem("tv-favorites").tvFocusBorder(RoundedCornerShape(16.dp)),
                 selected = viewModel.browseMode == TvBrowseMode.FAVORITES,
                 onClick = { viewModel.selectFavorites() },
                 leadingIcon = {
@@ -189,13 +181,15 @@ fun LiveTvScreen(
                 },
                 colors = FilterChipDefaults.filterChipColors(
                     selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-                    selectedLabelColor = MaterialTheme.colorScheme.primary
+                    selectedLabelColor = MaterialTheme.colorScheme.onSurface,
+                    selectedLeadingIconColor = MaterialTheme.colorScheme.onSurface
                 )
             )
           }
           item {
             // Persian (default)
             FilterChip(
+                modifier = Modifier.tvFocusItem("tv-persian").tvFocusBorder(RoundedCornerShape(16.dp)),
                 selected = viewModel.browseMode == TvBrowseMode.PERSIAN,
                 onClick = { viewModel.selectPersianDefault() },
                 label = {
@@ -206,13 +200,15 @@ fun LiveTvScreen(
                 },
                 colors = FilterChipDefaults.filterChipColors(
                     selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-                    selectedLabelColor = MaterialTheme.colorScheme.primary
+                    selectedLabelColor = MaterialTheme.colorScheme.onSurface,
+                    selectedLeadingIconColor = MaterialTheme.colorScheme.onSurface
                 )
             )
           }
           item {
             // Country picker
             FilterChip(
+                modifier = Modifier.tvFocusItem("tv-country").tvFocusBorder(RoundedCornerShape(16.dp)),
                 selected = viewModel.browseMode == TvBrowseMode.COUNTRY,
                 onClick = {
                     viewModel.ensureCountryListLoaded()
@@ -237,26 +233,28 @@ fun LiveTvScreen(
                 },
                 colors = FilterChipDefaults.filterChipColors(
                     selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-                    selectedLabelColor = MaterialTheme.colorScheme.primary
+                    selectedLabelColor = MaterialTheme.colorScheme.onSurface,
+                    selectedLeadingIconColor = MaterialTheme.colorScheme.onSurface
                 )
             )
           }
           item {
             // Category picker
             FilterChip(
+                modifier = Modifier.tvFocusItem("tv-category").tvFocusBorder(RoundedCornerShape(16.dp)),
                 selected = viewModel.browseMode == TvBrowseMode.CATEGORY,
                 onClick = {
                     viewModel.ensureCategoryListLoaded()
                     showCategoryPicker = true
                 },
                 leadingIcon = {
-                    if (viewModel.browseMode != TvBrowseMode.CATEGORY) {
-                        Icon(
-                            imageVector = Icons.Default.Category,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
+                    Icon(
+                        imageVector = if (viewModel.browseMode == TvBrowseMode.CATEGORY)
+                            viewModel.selectedGroup?.let(::tvCategoryIcon) ?: Icons.Default.Category
+                        else Icons.Default.Category,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
                 },
                 label = {
                     val label = if (viewModel.browseMode == TvBrowseMode.CATEGORY && viewModel.selectedGroup != null) {
@@ -268,7 +266,8 @@ fun LiveTvScreen(
                 },
                 colors = FilterChipDefaults.filterChipColors(
                     selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-                    selectedLabelColor = MaterialTheme.colorScheme.primary
+                    selectedLabelColor = MaterialTheme.colorScheme.onSurface,
+                    selectedLeadingIconColor = MaterialTheme.colorScheme.onSurface
                 )
             )
           }
@@ -277,39 +276,57 @@ fun LiveTvScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         // ---------- Search ----------
-        OutlinedTextField(
-            value = viewModel.searchQuery,
-            onValueChange = { viewModel.updateSearchQuery(it) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            placeholder = {
-                Text(
-                    text = stringResource(R.string.tv_search_hint),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+        if (isTv) {
+            // Use the native field so the Leanback keyboard retains D-pad input.
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                TvSearchField(
+                    query = viewModel.searchQuery,
+                    placeholder = stringResource(R.string.tv_search_hint),
+                    modifier = Modifier.weight(1f),
+                    onQueryChange = viewModel::updateSearchQuery,
+                    onSearch = {} // Channel filtering happens as the user types.
                 )
-            },
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            },
-            trailingIcon = {
-                if (viewModel.searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { viewModel.updateSearchQuery("") }) {
-                        Icon(
-                            imageVector = Icons.Default.Clear,
-                            contentDescription = "Clear",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                // Stay in the focus tree after clearing; a disappearing focused
+                // button would otherwise strand remote users on the search row.
+                IconButton(onClick = { viewModel.updateSearchQuery("") },
+                    modifier = Modifier.tvFocusItem("tv-search-clear")
+                        .size(48.dp).tvFocusBorder(CircleShape)) {
+                    Icon(Icons.Default.Clear,
+                        contentDescription = stringResource(R.string.search_clear),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                            alpha = if (viewModel.searchQuery.isEmpty()) 0.4f else 1f))
                 }
-            },
-            singleLine = true,
-            shape = RoundedCornerShape(12.dp)
-        )
+            }
+        } else {
+            OutlinedTextField(
+                value = viewModel.searchQuery,
+                onValueChange = { viewModel.updateSearchQuery(it) },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                    .tvFocusBorder(RoundedCornerShape(12.dp)),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent),
+                placeholder = {
+                    Text(stringResource(R.string.tv_search_hint),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                },
+                leadingIcon = {
+                    Icon(Icons.Default.Search, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                },
+                trailingIcon = {
+                    if (viewModel.searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { viewModel.updateSearchQuery("") },
+                            modifier = Modifier.tvFocusBorder(CircleShape)) {
+                            Icon(Icons.Default.Clear,
+                                contentDescription = stringResource(R.string.search_clear),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp)
+            )
+        }
 
         Spacer(modifier = Modifier.height(8.dp))
 
@@ -322,15 +339,26 @@ fun LiveTvScreen(
             ) {
                 item {
                     FilterChip(
+                        modifier = Modifier.tvFocusItem("tv-all-categories").tvFocusBorder(RoundedCornerShape(16.dp)),
                         selected = viewModel.selectedPersianCategory == null,
                         onClick = { viewModel.selectPersianCategory(null) },
+                        leadingIcon = {
+                            Icon(tvCategoryIcon(stringResource(R.string.tv_all)),
+                                contentDescription = null, modifier = Modifier.size(18.dp))
+                        },
                         label = { Text(stringResource(R.string.tv_all)) }
                     )
                 }
-                items(viewModel.persianCategories) { category ->
+                items(viewModel.persianCategories.distinct(), key = { it }) { category ->
                     FilterChip(
+                        modifier = Modifier.tvFocusItem("tv-category-$category")
+                            .tvFocusBorder(RoundedCornerShape(16.dp)),
                         selected = viewModel.selectedPersianCategory == category,
                         onClick = { viewModel.selectPersianCategory(category) },
+                        leadingIcon = {
+                            Icon(tvCategoryIcon(category), contentDescription = null,
+                                modifier = Modifier.size(18.dp))
+                        },
                         label = { Text(category) }
                     )
                 }
@@ -338,9 +366,16 @@ fun LiveTvScreen(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
-        // ---------- Content ----------
+        }
+        }
+        val columns = DeviceUtils.getGridColumns(context).coerceAtLeast(3)
+        LazyVerticalGrid(columns = GridCells.Fixed(columns), modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item(key = "header", span = { GridItemSpan(maxLineSpan) }) { phoneHeader() }
         when {
-            viewModel.isLoading -> {
+            viewModel.isLoading -> item(key = "loading", span = { GridItemSpan(maxLineSpan) }) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -356,7 +391,7 @@ fun LiveTvScreen(
                     }
                 }
             }
-            viewModel.errorMessage != null -> {
+            viewModel.errorMessage != null -> item(key = "error", span = { GridItemSpan(maxLineSpan) }) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -375,6 +410,7 @@ fun LiveTvScreen(
                         Text(
                             text = stringResource(R.string.tv_error),
                             style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
                             textAlign = TextAlign.Center
                         )
                         Spacer(modifier = Modifier.height(4.dp))
@@ -387,7 +423,8 @@ fun LiveTvScreen(
                             overflow = TextOverflow.Ellipsis
                         )
                         Spacer(modifier = Modifier.height(16.dp))
-                        Button(onClick = { viewModel.retry() }) {
+                        Button(onClick = { viewModel.retry() },
+                            modifier = Modifier.tvFocusItem("tv-retry").tvFocusBorder(CircleShape)) {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
                                 contentDescription = null,
@@ -399,7 +436,7 @@ fun LiveTvScreen(
                     }
                 }
             }
-            viewModel.channels.isEmpty() -> {
+            viewModel.channels.isEmpty() -> item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -420,6 +457,7 @@ fun LiveTvScreen(
                             Text(
                                 text = stringResource(R.string.tv_no_favorites),
                                 style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onBackground,
                                 textAlign = TextAlign.Center
                             )
                             Spacer(modifier = Modifier.height(6.dp))
@@ -440,15 +478,8 @@ fun LiveTvScreen(
                 }
             }
             else -> {
-                val columns = if (isTv) 5 else DeviceUtils.getGridColumns(context.resources).coerceAtLeast(3)
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(columns),
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(viewModel.channels, key = { it.id + it.url }) { channel ->
+                    items(viewModel.channels.distinctBy { it.favoriteKey },
+                        key = { it.favoriteKey }) { channel ->
                         ChannelCard(
                             channel = channel,
                             showCountryFlag = viewModel.browseMode == TvBrowseMode.COUNTRY,
@@ -464,8 +495,8 @@ fun LiveTvScreen(
                             }
                         )
                     }
-                }
             }
+        }
         }
     }
 
@@ -494,7 +525,8 @@ fun LiveTvScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = { showVpnHelpDialog = false }) {
+                TextButton(onClick = { showVpnHelpDialog = false },
+                    modifier = Modifier.tvDialogInitialFocus().tvFocusBorder(CircleShape)) {
                     Text(stringResource(R.string.ok))
                 }
             }
@@ -525,6 +557,7 @@ fun LiveTvScreen(
             isLoading = viewModel.isCategoryListLoading,
             selectedItem = if (viewModel.browseMode == TvBrowseMode.CATEGORY) viewModel.selectedGroup else null,
             itemLabel = { it },
+            itemIcon = ::tvCategoryIcon,
             onItemSelected = { category ->
                 showCategoryPicker = false
                 viewModel.selectCategory(category)
@@ -543,7 +576,7 @@ fun LiveTvScreen(
  *  - filled star  -> channel IS a favorite (tap to remove)
  */
 @Composable
-private fun ChannelCard(
+internal fun ChannelCard(
     channel: TvChannel,
     showCountryFlag: Boolean,
     isFavorite: Boolean,
@@ -554,17 +587,15 @@ private fun ChannelCard(
     val isFocused by interactionSource.collectIsFocusedAsState()
     val starInteractionSource = remember { MutableInteractionSource() }
     val isStarFocused by starInteractionSource.collectIsFocusedAsState()
+    val isTv = DeviceUtils.isTv(LocalContext.current)
 
     Card(
         onClick = onClick,
         interactionSource = interactionSource,
         modifier = Modifier
-            .fillMaxWidth()
-            .border(
-                width = if (isFocused) 2.dp else 0.dp,
-                color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                shape = RoundedCornerShape(12.dp)
-            ),
+            .tvFocusItem("tv-channel-${channel.favoriteKey}")
+            .fillMaxWidth().tvBringIntoViewOnFocus(margin = 4.dp, horizontalMargin = 0.dp)
+            .goldFocus(isFocused, RoundedCornerShape(12.dp), thin = isTv),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (isFocused)
@@ -606,7 +637,7 @@ private fun ChannelCard(
                     Icon(
                         imageVector = Icons.Default.LiveTv,
                         contentDescription = channel.name,
-                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                        tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(36.dp)
                     )
                 }
@@ -616,15 +647,12 @@ private fun ChannelCard(
                     onClick = onToggleFavorite,
                     interactionSource = starInteractionSource,
                     modifier = Modifier
+                        .tvFocusItem("tv-star-${channel.favoriteKey}")
                         .align(Alignment.TopEnd)
-                        .size(30.dp)
+                        .size(if (isTv) 48.dp else 30.dp)
+                        .settingsFocusBorder(isStarFocused, CircleShape)
                         .clip(CircleShape)
                         .background(Color.Black.copy(alpha = 0.45f))
-                        .border(
-                            width = if (isStarFocused) 2.dp else 0.dp,
-                            color = if (isStarFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                            shape = CircleShape
-                        )
                 ) {
                     Icon(
                         imageVector = if (isFavorite) Icons.Default.Star else Icons.Outlined.StarBorder,
@@ -684,13 +712,25 @@ private fun PickerDialog(
     isLoading: Boolean,
     selectedItem: String?,
     itemLabel: (String) -> String,
+    itemIcon: ((String) -> ImageVector)? = null,
     onItemSelected: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var filter by remember { mutableStateOf("") }
+    var focusFirstOption by remember { mutableStateOf(true) }
+    val isTv = DeviceUtils.isTv(LocalContext.current)
     val filteredItems = remember(items, filter) {
-        if (filter.isBlank()) items
-        else items.filter { it.contains(filter.trim(), ignoreCase = true) }
+        // A feed may repeat a category/country; the lazy keys must stay unique.
+        val options = items.distinct()
+        if (filter.isBlank()) options
+        else options.filter { it.contains(filter.trim(), ignoreCase = true) }
+    }
+    val selectedIndex = filteredItems.indexOf(selectedItem).takeIf { it >= 0 } ?: 0
+    val listState = rememberLazyListState()
+    LaunchedEffect(filteredItems, selectedIndex, isLoading, isTv) {
+        if (isTv && !isLoading && filteredItems.isNotEmpty()) {
+            listState.scrollToItem(if (filter.isBlank()) selectedIndex else 0)
+        }
     }
 
     AlertDialog(
@@ -704,21 +744,29 @@ private fun PickerDialog(
         },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
-                OutlinedTextField(
-                    value = filter,
-                    onValueChange = { filter = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text(stringResource(R.string.tv_filter_hint)) },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(10.dp)
-                )
+                if (isTv) {
+                    TvSearchField(
+                        query = filter,
+                        placeholder = stringResource(R.string.tv_filter_hint),
+                        onQueryChange = { filter = it; focusFirstOption = false },
+                        onSearch = {} // List already filters as the user types.
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = filter,
+                        onValueChange = { filter = it },
+                        modifier = Modifier.fillMaxWidth()
+                            .tvFocusBorder(RoundedCornerShape(10.dp)),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent),
+                        placeholder = { Text(stringResource(R.string.tv_filter_hint)) },
+                        leadingIcon = {
+                            Icon(Icons.Default.Search, contentDescription = null,
+                                modifier = Modifier.size(18.dp))
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                }
                 Spacer(modifier = Modifier.height(8.dp))
                 when {
                     isLoading -> {
@@ -746,14 +794,16 @@ private fun PickerDialog(
                     }
                     else -> {
                         LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 400.dp)
+                            state = listState,
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp)
                         ) {
-                            items(filteredItems, key = { it }) { item ->
+                            itemsIndexed(filteredItems, key = { _, item -> item }) { index, item ->
                                 PickerRow(
                                     label = itemLabel(item),
+                                    icon = itemIcon?.invoke(item),
                                     isSelected = item == selectedItem,
+                                    modifier = if (focusFirstOption && index == selectedIndex)
+                                        Modifier.tvDialogInitialFocus() else Modifier,
                                     onClick = { onItemSelected(item) }
                                 )
                             }
@@ -764,7 +814,9 @@ private fun PickerDialog(
         },
         confirmButton = {},
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(onClick = onDismiss,
+                modifier = (if (filter.isBlank() && (isLoading || filteredItems.isEmpty()))
+                    Modifier.tvDialogInitialFocus() else Modifier).tvFocusBorder(CircleShape)) {
                 Text(stringResource(R.string.tv_cancel))
             }
         }
@@ -774,8 +826,10 @@ private fun PickerDialog(
 @Composable
 private fun PickerRow(
     label: String,
+    icon: ImageVector?,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -783,14 +837,10 @@ private fun PickerRow(
     Card(
         onClick = onClick,
         interactionSource = interactionSource,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 3.dp)
-            .border(
-                width = if (isFocused) 2.dp else 0.dp,
-                color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                shape = RoundedCornerShape(10.dp)
-            ),
+            .settingsFocusBorder(isFocused, RoundedCornerShape(10.dp)),
         shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(
             containerColor = when {
@@ -807,14 +857,22 @@ private fun PickerRow(
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (icon != null) {
+                Icon(icon, contentDescription = null,
+                    tint = if (isSelected) MaterialTheme.colorScheme.onSurface
+                        else if (isFocused) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(12.dp))
+            }
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                color = if (isSelected || isFocused)
-                    MaterialTheme.colorScheme.primary
-                else
-                    MaterialTheme.colorScheme.onSurface,
+                // Accent-tinted selection is still mostly the underlying surface.
+                // Use its light/dark onSurface text, with the accent dot as the cue.
+                color = if (isFocused && !isSelected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )

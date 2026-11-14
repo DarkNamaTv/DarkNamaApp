@@ -1,8 +1,11 @@
 package com.dark.darknama.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,18 +23,20 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.AlertDialog
+import com.dark.darknama.ui.theme.GlassAlertDialog as AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.dark.darknama.ui.theme.GlassCard as Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -47,12 +52,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -61,12 +68,21 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
+import com.dark.darknama.R
+import com.dark.darknama.navigation.LocalTvFocusEntry
+import com.dark.darknama.navigation.LocalTvFocusRegistry
+import com.dark.darknama.navigation.tvFocusItem
+import com.dark.darknama.navigation.tvDialogInitialFocus
 import com.dark.darknama.VideoPlayerActivity
-import com.dark.darknama.components.DownloadOptionsDialog
+import com.dark.darknama.components.SourceDownloadOptions
+import com.dark.darknama.components.copyTitleOnClick
 import com.dark.darknama.components.ExpandableText
+import com.dark.darknama.components.tvFocusBorder
 import com.dark.darknama.data.model.FavoriteItem
+import com.dark.darknama.data.model.MediaSourceSelection
 import com.dark.darknama.data.model.Movie
 import com.dark.darknama.data.model.Source
+import com.dark.darknama.utils.DeviceUtils
 import com.dark.darknama.utils.DownloadUtils
 import com.dark.darknama.utils.StorageUtils
 
@@ -76,13 +92,25 @@ fun SingleMovieScreen(
     movieId: Int,
     navController: NavController
 ) {
-    var movie by remember { mutableStateOf<Movie?>(null) }
+    var movie by remember(movieId) { mutableStateOf<Movie?>(null) }
+    var isLoading by remember(movieId) { mutableStateOf(true) }
     val context = LocalContext.current
-    
+
     LaunchedEffect(movieId) {
         movie = StorageUtils.loadMovieFromFile(context, movieId)
+        isLoading = false
     }
-    
+    // The loading back button is replaced with a new one when the file arrives.
+    // Re-attach the remembered focus after that replacement on TV.
+    val focusRegistry = LocalTvFocusRegistry.current
+    val focusEntry = LocalTvFocusEntry.current
+    LaunchedEffect(movie?.id, focusEntry) {
+        if (movie != null && DeviceUtils.isTv(context)) {
+            withFrameNanos { }
+            focusRegistry?.restore(focusEntry)
+        }
+    }
+
     // Directly render content without Scaffold since it's already in MainScreen's Scaffold
     if (movie != null) {
         MovieDetailsContent(
@@ -90,7 +118,11 @@ fun SingleMovieScreen(
             onBackClick = { navController.popBackStack() },
             onPlayClick = { source ->
                 // Launch video player activity
-                VideoPlayerActivity.start(context, source.url)
+                VideoPlayerActivity.start(
+                    context, source.url, source.type,
+                    movieId = movie!!.id, title = movie!!.title, image = movie!!.image,
+                    quality = source.quality
+                )
             },
             // Remove any padding from parent Scaffold to use full screen
             modifier = Modifier.fillMaxSize()
@@ -105,14 +137,16 @@ fun SingleMovieScreen(
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                IconButton(onClick = { navController.popBackStack() }) {
+                IconButton(onClick = { navController.popBackStack() },
+                    modifier = Modifier.tvFocusItem("movie-back", initial = true)
+                        .tvFocusBorder(CircleShape)) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back"
+                        contentDescription = stringResource(R.string.back)
                     )
                 }
                 Text(
-                    text = "Movie not found",
+                    text = stringResource(if (isLoading) R.string.loading_movies else R.string.movie_not_found),
                     style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.padding(top = 16.dp)
@@ -130,26 +164,31 @@ fun MovieDetailsContent(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val layoutDirection = LocalLayoutDirection.current
-    var selectedSource by remember { mutableStateOf<Source?>(null) }
-    var showSourceDialog by remember { mutableStateOf(false) }
-    
-    // Source selection dialog
+    var selectedSource by remember(movie.id) { mutableStateOf<Source?>(null) }
+    var showSourceDialog by remember(movie.id) { mutableStateOf(false) }
+    var downloadSource by remember(movie.id) { mutableStateOf<Source?>(null) }
+    var downloadSources by remember(movie.id) { mutableStateOf<List<Source>>(emptyList()) }
+
     if (showSourceDialog && selectedSource != null) {
         SourceOptionsDialog(
             source = selectedSource!!,
             onDismiss = { showSourceDialog = false },
-            onDownload = { source ->
-                showSourceDialog = false
-                DownloadUtils.openUrl(context, source.url)
-            },
             onPlay = { source ->
                 showSourceDialog = false
                 onPlayClick(source)
             }
         )
     }
-    
+    downloadSource?.let { source ->
+        SourceDownloadOptions(source) {
+            downloadSource = null
+        }
+    }
+    if (downloadSources.isNotEmpty()) {
+        DownloadMenu(sources = downloadSources,
+            onDismiss = { downloadSources = emptyList() })
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -211,6 +250,8 @@ fun MovieDetailsContent(
                     contentDescription = movie.title,
                     modifier = Modifier
                         .height(200.dp)
+                        .tvFocusItem("movie-poster")
+                        .tvFocusBorder(RoundedCornerShape(8.dp))
                         .clip(RoundedCornerShape(8.dp))
                         .clickable { showImageDialog = true },
                     contentScale = ContentScale.Fit
@@ -224,6 +265,7 @@ fun MovieDetailsContent(
                         text = { Text("Choose an action for this image") },
                         confirmButton = {
                             TextButton(
+                                modifier = Modifier.tvFocusBorder(CircleShape),
                                 onClick = {
                                     DownloadUtils.copyToClipboard(context, movie.image)
                                     showImageDialog = false
@@ -234,7 +276,8 @@ fun MovieDetailsContent(
                         },
                         dismissButton = {
                             TextButton(
-                                onClick = { showImageDialog = false }
+                                onClick = { showImageDialog = false },
+                                modifier = Modifier.tvDialogInitialFocus().tvFocusBorder(CircleShape)
                             ) {
                                 Text("Cancel")
                             }
@@ -253,7 +296,9 @@ fun MovieDetailsContent(
                         text = movie.title,
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.tvFocusItem("movie-copy-title")
+                            .copyTitleOnClick(movie.title)
                     )
                     
                     // Country and year
@@ -296,13 +341,16 @@ fun MovieDetailsContent(
             IconButton(
                 onClick = onBackClick,
                 modifier = Modifier
+                    .tvFocusItem("movie-back", initial = true)
                     .padding(16.dp)
                     .align(Alignment.TopStart)
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f), CircleShape)
+                    .tvFocusBorder(CircleShape)
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = MaterialTheme.colorScheme.onSurface
+                    contentDescription = stringResource(R.string.back),
+                    tint = MaterialTheme.colorScheme.primary
                 )
             }
             
@@ -326,6 +374,7 @@ fun MovieDetailsContent(
                     text = { Text("Are you sure you want to remove this movie from your favorites?") },
                     confirmButton = {
                         TextButton(
+                            modifier = Modifier.tvFocusBorder(CircleShape),
                             onClick = {
                                 StorageUtils.removeFavorite(context, movieId, "movie")
                                 isFavorite = false
@@ -339,7 +388,8 @@ fun MovieDetailsContent(
                     },
                     dismissButton = {
                         TextButton(
-                            onClick = { showRemoveFavoriteDialog = false }
+                            onClick = { showRemoveFavoriteDialog = false },
+                            modifier = Modifier.tvDialogInitialFocus().tvFocusBorder(CircleShape)
                         ) {
                             Text("Cancel")
                         }
@@ -375,9 +425,10 @@ fun MovieDetailsContent(
                         android.widget.Toast.makeText(context, "Added to favorites", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 },
-                modifier = Modifier
+                modifier = Modifier.tvFocusItem("movie-favorite")
                     .padding(16.dp)
                     .align(Alignment.TopEnd)
+                    .tvFocusBorder(CircleShape)
             ) {
                 Icon(
                     imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
@@ -457,59 +508,18 @@ fun MovieDetailsContent(
                     .fillMaxWidth()
             )
         }
-        
-        // Sources/Quality options
-        if (movie.sources.isNotEmpty()) {
-            Text(
-                text = "Available Qualities",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp)
-            )
-            
-            Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp)
-            ) {
-                movie.sources.forEach { source ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                selectedSource = source
-                                showSourceDialog = true
-                            },
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        ),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = source.quality,
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = "Play",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                }
+        MovieLinksSection(
+            movie = movie,
+            onSourceClick = { source ->
+                selectedSource = source
+                showSourceDialog = true
+            },
+            onDownloadSources = { sources ->
+                if (sources.size == 1) downloadSource = sources.first()
+                else downloadSources = sources
             }
-        }
-        
+        )
+
         Spacer(modifier = Modifier.height(16.dp))
     }
 }
@@ -518,41 +528,28 @@ fun MovieDetailsContent(
 fun SourceOptionsDialog(
     source: Source,
     onDismiss: () -> Unit,
-    onDownload: (Source) -> Unit,
     onPlay: (Source) -> Unit
 ) {
+    var showDownloadOptions by remember(source.url) { mutableStateOf(false) }
     val context = LocalContext.current
-    var showDownloadOptions by remember { mutableStateOf(false) }
-    
     if (showDownloadOptions) {
-        DownloadOptionsDialog(
-            source = source,
-            onDismiss = { showDownloadOptions = false },
-            onCopyLink = { DownloadUtils.copyToClipboard(context, source.url) },
-            onDownloadWithBrowser = { DownloadUtils.openUrl(context, source.url) },
-            onDownloadWithADM = { DownloadUtils.openWithADM(context, source.url) },
-            onOpenInVLC = { DownloadUtils.openWithVLC(context, source.url) },
-            onOpenInMXPlayer = { DownloadUtils.openWithMXPlayer(context, source.url) },
-            onOpenInKMPlayer = { DownloadUtils.openWithKMPlayer(context, source.url) }
-        )
+        SourceDownloadOptions(source, onDismiss)
+        return
     }
-    
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = source.quality,
+                text = source.quality.trim().takeIf { MediaSourceSelection.hasNamedQuality(it) }
+                    ?: stringResource(R.string.movie_direct_link_title),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold
             )
         },
-        text = {
-            Text(
-                text = "Choose an action for this video quality",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        },
+        text = { Text(stringResource(R.string.movie_quality_action_hint),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant) },
         confirmButton = {
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -560,22 +557,22 @@ fun SourceOptionsDialog(
             ) {
                 Button(
                     onClick = { showDownloadOptions = true },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.tvDialogInitialFocus().fillMaxWidth().tvFocusBorder(RoundedCornerShape(16.dp)),
                     shape = RoundedCornerShape(16.dp),
                     elevation = androidx.compose.material3.ButtonDefaults.elevatedButtonElevation()
                 ) {
                     Icon(
                         imageVector = Icons.Default.Download,
-                        contentDescription = "Download",
+                        contentDescription = stringResource(R.string.download),
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Download Options")
+                    Text(stringResource(R.string.movie_download_options))
                 }
                 
                 Button(
                     onClick = { onPlay(source) },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().tvFocusBorder(RoundedCornerShape(16.dp)),
                     shape = RoundedCornerShape(16.dp),
                     colors = androidx.compose.material3.ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -585,20 +582,33 @@ fun SourceOptionsDialog(
                 ) {
                     Icon(
                         imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Play",
+                        contentDescription = stringResource(R.string.movie_play_in_app),
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Play in DarkNama")
+                    Text(stringResource(R.string.movie_play_in_app))
                 }
-                
-                // Cancel button moved to the bottom of the dialog
+
+                TextButton(onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText(
+                        context.getString(R.string.movie_links_clipboard), source.url.trim()))
+                    Toast.makeText(context, context.resources.getQuantityString(
+                        R.plurals.movie_links_copied, 1, 1), Toast.LENGTH_SHORT).show()
+                    onDismiss()
+                }, modifier = Modifier.fillMaxWidth().tvFocusBorder(CircleShape)) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = null,
+                        modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.download_options_copy_link))
+                }
+
                 TextButton(
                     onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().tvFocusBorder(RoundedCornerShape(16.dp)),
                     shape = RoundedCornerShape(16.dp)
                 ) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.cancel))
                 }
             }
         },

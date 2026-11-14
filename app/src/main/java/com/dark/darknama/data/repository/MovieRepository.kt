@@ -1,32 +1,46 @@
 package com.dark.darknama.data.repository
 
+import android.content.Context
+
 import com.dark.darknama.data.model.Country
 import com.dark.darknama.data.model.FilterType
 import com.dark.darknama.data.model.Genre
 import com.dark.darknama.data.model.Movie
 import com.dark.darknama.data.model.Source
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
+import java.io.IOException
 
-class MovieRepository : BaseRepository() {
-    private val BASE_URL = "https://server-hi-speed-iran.info/api/movie/by/filtres"
+class MovieRepository(context: Context) : BaseRepository(context) {
+    private val BASE_URL = "${com.dark.darknama.data.model.ServerSettings.DEFAULT_SERVER_1}/api/movie/by/filtres"
     
-    suspend fun getMovies(page: Int = 0, genreId: Int = 0, filterType: FilterType = FilterType.DEFAULT): List<Movie> {
-        return withContext(Dispatchers.IO) {
-            try {
-                val url = buildUrl(BASE_URL, genreId, filterType, page)
-                
-                val jsonData = executeRequest(url) { Request.Builder().url(it).build() }
-                
-                parseMovies(jsonData)
-            } catch (e: Exception) {
-                throw Exception("Error fetching movies: ${e.message}")
-            }
+    /** Banner callers need a list; the repository still filters it before returning. */
+    suspend fun getMovies(page: Int = 0, genreId: Int = 0,
+                          filterType: FilterType = FilterType.DEFAULT): List<Movie> =
+        getMovieBatch(page, genreId, filterType, minItems = 5).items
+
+    /** Retain the raw paging cursor even when an entire page contains ads. */
+    suspend fun getMovieBatch(page: Int = 0, genreId: Int = 0,
+                              filterType: FilterType = FilterType.DEFAULT,
+                              minItems: Int = 20): FilteredPage<Movie> = withContext(Dispatchers.IO) {
+        try {
+            fetchFilteredPages(
+                startPage = page, minItems = minItems,
+                fetchPage = { nextPage ->
+                    val url = buildUrl(BASE_URL, genreId, filterType, nextPage)
+                    parseMovies(executeRequest(url) { Request.Builder().url(it).build() })
+                },
+                isExcluded = { isPromotional(it) },
+                onExcluded = { logSkippedPromotionalTitle(it.title) }
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            throw IOException("Error fetching movies", e)
         }
     }
     
@@ -38,22 +52,18 @@ class MovieRepository : BaseRepository() {
         }
     }
     
-    private fun parseMovies(jsonData: String): List<Movie> {
+    private fun parseMovies(jsonData: String): FeedPage<Movie> {
         val movies = mutableListOf<Movie>()
         val jsonArray = JSONArray(jsonData)
-        
+
         for (i in 0 until jsonArray.length()) {
             try {
-                val movieObj = jsonArray.getJSONObject(i)
-                val movie = parseMovie(movieObj)
-                movies.add(movie)
-            } catch (e: Exception) {
-                // Skip items that fail to parse
-                continue
+                movies.add(parseMovie(jsonArray.getJSONObject(i)))
+            } catch (_: Exception) {
+                // An invalid entry does not imply the API has run out of pages.
             }
         }
-        
-        return movies
+        return FeedPage(movies, hasMore = jsonArray.length() > 0)
     }
     
     private fun parseMovie(movieObj: JSONObject): Movie {
@@ -110,14 +120,7 @@ class MovieRepository : BaseRepository() {
         for (i in 0 until sourcesArray.length()) {
             try {
                 val sourceObj = sourcesArray.getJSONObject(i)
-                sources.add(
-                    Source(
-                        id = sourceObj.optInt("id", 0),
-                        quality = sourceObj.optString("quality", "Unknown"),
-                        type = sourceObj.optString("type", "Unknown"),
-                        url = sourceObj.optString("url", "")
-                    )
-                )
+                sources.add(MediaSourceParser.parse(sourceObj))
             } catch (e: Exception) {
                 // Skip sources that fail to parse
                 continue

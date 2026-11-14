@@ -1,6 +1,7 @@
 package com.dark.darknama.screens
 
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -43,6 +44,9 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.dark.darknama.R
+import com.dark.darknama.navigation.tvFocusItem
+import com.dark.darknama.components.tvFocusBorder
+import com.dark.darknama.utils.DeviceUtils
 import com.dark.darknama.utils.StorageUtils
 import kotlinx.coroutines.delay
 
@@ -54,7 +58,10 @@ fun SplashScreen(
     val context = LocalContext.current
     var showWelcomeSlider by remember { mutableStateOf(!StorageUtils.isWelcomeCompleted(context)) }
     var currentSlide by remember { mutableStateOf(0) }
-    
+    BackHandler(enabled = DeviceUtils.isTv(context) && showWelcomeSlider && currentSlide > 0) {
+        currentSlide--
+    }
+
     if (showWelcomeSlider) {
         WelcomeSliderScreen(
             currentSlide = currentSlide,
@@ -178,6 +185,7 @@ fun WelcomeSliderScreen(
                         onClick = {
                             onSlideChange(currentSlide - 1)
                         },
+                        modifier = Modifier.tvFocusItem("welcome-previous").tvFocusBorder(RoundedCornerShape(16.dp)),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary
                         ),
@@ -196,6 +204,7 @@ fun WelcomeSliderScreen(
                 
                 // Next/Finish button
                 Button(
+                    modifier = Modifier.tvFocusItem("welcome-next", initial = true).tvFocusBorder(RoundedCornerShape(16.dp)),
                     onClick = {
                         if (currentSlide < 3) {
                             onSlideChange(currentSlide + 1)

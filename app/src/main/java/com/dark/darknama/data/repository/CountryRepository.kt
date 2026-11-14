@@ -1,5 +1,7 @@
 package com.dark.darknama.data.repository
 
+import android.content.Context
+
 import com.dark.darknama.data.model.Country
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -7,8 +9,8 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 
-class CountryRepository : BaseRepository() {
-    private val BASE_URL = "https://server-hi-speed-iran.info/api/country/all"
+class CountryRepository(context: Context) : BaseRepository(context) {
+    private val BASE_URL = "${com.dark.darknama.data.model.ServerSettings.DEFAULT_SERVER_1}/api/country/all"
     
     suspend fun getAllCountries(): List<Country> {
         return withContext(Dispatchers.IO) {

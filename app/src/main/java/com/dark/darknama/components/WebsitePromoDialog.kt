@@ -3,6 +3,9 @@ package com.dark.darknama.components
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,7 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
+import com.dark.darknama.ui.theme.GlassCard as Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -25,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -32,6 +36,7 @@ import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.dark.darknama.R
+import com.dark.darknama.navigation.tvDialogInitialFocus
 
 private const val WEBSITE_URL = "https://darknama.pages.dev/"
 private const val BANNER_IMAGE_URL = "https://raw.githubusercontent.com/DaknamaTv/DarkNama/main/darknama.jpg"
@@ -45,19 +50,24 @@ fun NetworkLogoButton(
     modifier: Modifier = Modifier
 ) {
     var showDialog by remember { mutableStateOf(false) }
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
 
-    AsyncImage(
-        model = ImageRequest.Builder(LocalContext.current)
-            .data(R.drawable.splash_logo)
-            .crossfade(true)
-            .build(),
-        contentDescription = "DarkNama",
-        modifier = modifier
-            .size(36.dp)
-            .clip(CircleShape)
-            .clickable { showDialog = true },
-        contentScale = ContentScale.Crop
-    )
+    Box(modifier = modifier.size(48.dp)
+        .settingsFocusBorder(focused, CircleShape)
+        .clickable(interactionSource = interaction, indication = null,
+            onClickLabel = stringResource(R.string.open_darknama_website)) { showDialog = true },
+        contentAlignment = Alignment.Center) {
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(R.drawable.splash_logo)
+                .crossfade(true)
+                .build(),
+            contentDescription = stringResource(R.string.app_name),
+            modifier = Modifier.size(36.dp).clip(CircleShape),
+            contentScale = ContentScale.Crop
+        )
+    }
 
     if (showDialog) {
         WebsitePromoDialog(onDismiss = { showDialog = false })
@@ -99,9 +109,10 @@ fun WebsitePromoDialog(
                         .data(BANNER_IMAGE_URL)
                         .crossfade(true)
                         .build(),
-                    contentDescription = "DarkNama Website",
+                    contentDescription = stringResource(R.string.open_darknama_website),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .tvFocusBorder(RoundedCornerShape(12.dp))
                         .clip(RoundedCornerShape(12.dp))
                         .clickable { openWebsite() },
                     contentScale = ContentScale.FillWidth
@@ -117,6 +128,8 @@ fun WebsitePromoDialog(
                     color = MaterialTheme.colorScheme.primary,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
+                        .tvDialogInitialFocus()
+                        .tvFocusBorder(RoundedCornerShape(8.dp))
                         .clickable { openWebsite() }
                         .padding(4.dp)
                 )

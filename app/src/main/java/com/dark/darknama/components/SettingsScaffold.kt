@@ -1,7 +1,6 @@
 package com.dark.darknama.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -21,7 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.Card
+import com.dark.darknama.ui.theme.GlassCard as Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,10 +34,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import com.dark.darknama.R
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import com.dark.darknama.ui.theme.contrastingOn
+import com.dark.darknama.navigation.tvFocusItem
+import com.dark.darknama.utils.DeviceUtils
 
 /**
  * Shared building blocks for the settings screens.
@@ -49,16 +63,12 @@ import androidx.navigation.NavController
  * "About" page).
  */
 
-/** Draws a visible focus ring so D-pad users can see the focused element. */
+/** Kept for existing settings/control call sites; delegates to the one gold focus renderer. */
 @Composable
 fun Modifier.settingsFocusBorder(
     isFocused: Boolean,
-    shape: RoundedCornerShape = RoundedCornerShape(12.dp)
-): Modifier = this.border(
-    width = if (isFocused) 2.dp else 0.dp,
-    color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-    shape = shape
-)
+    shape: Shape = RoundedCornerShape(12.dp)
+): Modifier = this.goldFocus(isFocused, shape)
 
 /**
  * Standard page frame for a settings sub-page: a back button + title header
@@ -85,20 +95,14 @@ fun SettingsSubPage(
                 onClick = { navController?.popBackStack() },
                 interactionSource = backInteractionSource,
                 modifier = Modifier
-                    .size(44.dp)
-                    .border(
-                        width = if (isBackFocused) 2.dp else 0.dp,
-                        color = if (isBackFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                        shape = CircleShape
-                    )
+                    .tvFocusItem("settings-back", initial = true)
+                    .size(if (DeviceUtils.isTv(LocalContext.current)) 48.dp else 44.dp)
+                    .settingsFocusBorder(isBackFocused, CircleShape)
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = if (isBackFocused)
-                        MaterialTheme.colorScheme.primary
-                    else
-                        MaterialTheme.colorScheme.onSurface
+                    contentDescription = stringResource(R.string.back),
+                    tint = MaterialTheme.colorScheme.primary
                 )
             }
 
@@ -116,6 +120,7 @@ fun SettingsSubPage(
                 text = title,
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
                     .weight(1f)
                     .padding(start = 12.dp)
@@ -137,7 +142,8 @@ fun SettingsNavigationCard(
     icon: ImageVector,
     title: String,
     summary: String? = null,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -145,8 +151,7 @@ fun SettingsNavigationCard(
     Card(
         onClick = onClick,
         interactionSource = interactionSource,
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier.fillMaxWidth().tvBringIntoViewOnFocus()
             .settingsFocusBorder(isFocused),
         elevation = CardDefaults.cardElevation(defaultElevation = if (isFocused) 8.dp else 4.dp),
         colors = CardDefaults.cardColors(
@@ -175,7 +180,8 @@ fun SettingsNavigationCard(
             ) {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.titleMedium
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 if (!summary.isNullOrBlank()) {
                     Text(
@@ -203,14 +209,19 @@ fun SettingsOptionRow(
     label: String,
     isSelected: Boolean,
     description: String? = null,
-    onSelect: () -> Unit
+    onSelect: () -> Unit,
+    previewText: String? = null,
+    previewFontFamily: FontFamily? = null,
+    focusKey: String? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
 
     Row(
-        modifier = Modifier
+        modifier = Modifier.tvFocusItem(focusKey ?: "settings-option-$label")
             .fillMaxWidth()
+            .tvBringIntoViewOnFocus()
+            .settingsFocusBorder(isFocused, RoundedCornerShape(10.dp))
             .clip(RoundedCornerShape(10.dp))
             .background(
                 if (isFocused)
@@ -218,7 +229,6 @@ fun SettingsOptionRow(
                 else
                     Color.Transparent
             )
-            .settingsFocusBorder(isFocused, RoundedCornerShape(10.dp))
             .clickable(
                 interactionSource = interactionSource,
                 indication = null
@@ -229,7 +239,7 @@ fun SettingsOptionRow(
         // onClick = null keeps the RadioButton purely visual so the whole row
         // is a single focus target for the TV remote.
         RadioButton(selected = isSelected, onClick = null)
-        Column(modifier = Modifier.padding(start = 8.dp)) {
+        Column(modifier = Modifier.padding(start = 8.dp).weight(1f)) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyLarge,
@@ -244,6 +254,17 @@ fun SettingsOptionRow(
                     text = description,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (previewText != null) {
+                // The current app theme can be a different font: override the
+                // family for *this* row's sample, even for System Default.
+                Text(
+                    text = previewText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = previewFontFamily ?: FontFamily.Default,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(top = 4.dp)
                 )
             }
         }
@@ -275,12 +296,14 @@ fun SettingsStepperRow(
     onDecrease: () -> Unit,
     onIncrease: () -> Unit,
     canDecrease: Boolean = true,
-    canIncrease: Boolean = true
+    canIncrease: Boolean = true,
+    focusKey: String? = null
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(bottom = 8.dp)
         )
         Row(
@@ -291,6 +314,7 @@ fun SettingsStepperRow(
             StepperButton(
                 symbol = "−",
                 enabled = canDecrease,
+                focusKey = focusKey?.let { "$it-decrease" },
                 onClick = onDecrease
             )
             Box(
@@ -311,6 +335,7 @@ fun SettingsStepperRow(
             StepperButton(
                 symbol = "+",
                 enabled = canIncrease,
+                focusKey = focusKey?.let { "$it-increase" },
                 onClick = onIncrease
             )
         }
@@ -321,25 +346,23 @@ fun SettingsStepperRow(
 private fun StepperButton(
     symbol: String,
     enabled: Boolean,
+    focusKey: String? = null,
     onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
 
     Box(
-        modifier = Modifier
-            .size(48.dp)
+        modifier = (if (enabled && focusKey != null) Modifier.tvFocusItem(focusKey)
+            else Modifier).size(48.dp)
+            .settingsFocusBorder(isFocused, CircleShape)
             .clip(CircleShape)
             .background(
-                if (enabled)
-                    MaterialTheme.colorScheme.primary.copy(alpha = if (isFocused) 0.9f else 0.25f)
-                else
-                    MaterialTheme.colorScheme.surfaceVariant
-            )
-            .border(
-                width = if (isFocused) 2.dp else 0.dp,
-                color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                shape = CircleShape
+                when {
+                    !enabled -> MaterialTheme.colorScheme.surfaceVariant
+                    isFocused -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                }
             )
             .clickable(
                 interactionSource = interactionSource,
@@ -355,7 +378,9 @@ private fun StepperButton(
             color = when {
                 !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                 isFocused -> MaterialTheme.colorScheme.onPrimary
-                else -> MaterialTheme.colorScheme.primary
+                // The idle button has only a 25% accent fill. Use surface text
+                // rather than accent-on-accent so +/− remain readable in dark mode.
+                else -> MaterialTheme.colorScheme.onSurface
             }
         )
     }
@@ -371,27 +396,33 @@ fun SettingsColorSwatch(
     onSelect: () -> Unit,
     label: String? = null,
     swatchSize: Int = 48,
-    showEmptyIndicator: Boolean = false
+    showEmptyIndicator: Boolean = false,
+    focusKey: String? = null,
+    accessibilityLabel: String? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
+    val size = if (DeviceUtils.isTv(LocalContext.current)) swatchSize.coerceAtLeast(48)
+        else swatchSize
 
     Column(
+        modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Box(
-            modifier = Modifier
-                .size(swatchSize.dp)
-                .border(
-                    width = if (isFocused) 3.dp else 0.dp,
-                    color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                    shape = CircleShape
-                )
+            modifier = (if (focusKey != null) Modifier.tvFocusItem(focusKey) else Modifier)
+                .size(size.dp).tvBringIntoViewOnFocus()
+                .settingsFocusBorder(isFocused, CircleShape)
                 .clip(CircleShape)
                 .background(
                     if (color == Color.Transparent) Color.Gray.copy(alpha = 0.3f) else color
                 )
+                .semantics {
+                    contentDescription = accessibilityLabel ?: label ?: color.toString()
+                    selected = isSelected
+                    role = Role.RadioButton
+                }
                 .clickable(
                     interactionSource = interactionSource,
                     indication = null
@@ -401,17 +432,15 @@ fun SettingsColorSwatch(
             if (isSelected) {
                 Icon(
                     imageVector = Icons.Default.Check,
-                    contentDescription = "Selected",
-                    tint = if (color == Color.White || color == Color.Yellow || color == Color.Transparent)
-                        Color.Black
-                    else
-                        Color.White,
-                    modifier = Modifier.size((swatchSize / 2).dp)
+                    contentDescription = null,
+                    tint = contrastingOn(if (color == Color.Transparent)
+                        MaterialTheme.colorScheme.surfaceVariant else color),
+                    modifier = Modifier.size((size / 2).dp)
                 )
             } else if (showEmptyIndicator && color == Color.Transparent) {
                 Text(
                     text = "—",
-                    color = Color.White.copy(alpha = 0.8f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyLarge
                 )
             }
@@ -421,11 +450,13 @@ fun SettingsColorSwatch(
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodySmall,
-                color = if (isFocused)
+                color = if (isFocused || isSelected)
                     MaterialTheme.colorScheme.primary
                 else
                     MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center
             )
         }
     }

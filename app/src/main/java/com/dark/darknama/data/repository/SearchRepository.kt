@@ -1,22 +1,24 @@
 package com.dark.darknama.data.repository
 
+import android.content.Context
+
 import com.dark.darknama.data.model.Country
 import com.dark.darknama.data.model.Genre
 import com.dark.darknama.data.model.Poster
 import com.dark.darknama.data.model.SearchResult
 import com.dark.darknama.data.model.Source
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
-import java.util.concurrent.TimeUnit
 
-class SearchRepository : BaseRepository() {
-    private val BASE_URL = "https://server-hi-speed-iran.info/api/search"
+class SearchRepository(context: Context) : BaseRepository(context) {
+    private val BASE_URL = "${com.dark.darknama.data.model.ServerSettings.DEFAULT_SERVER_1}/api/search"
     
     suspend fun search(query: String): SearchResult {
         return withContext(Dispatchers.IO) {
@@ -28,8 +30,10 @@ class SearchRepository : BaseRepository() {
                 val jsonData = executeRequest(url) { Request.Builder().url(it).build() }
                 
                 parseSearchResult(jsonData)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
-                throw Exception("Error searching: ${e.message}")
+                throw IOException("Error searching", e)
             }
         }
     }
@@ -48,8 +52,9 @@ class SearchRepository : BaseRepository() {
         val posters = mutableListOf<Poster>()
         for (i in 0 until postersArray.length()) {
             try {
-                val posterObj = postersArray.getJSONObject(i)
-                posters.add(parsePoster(posterObj))
+                val poster = parsePoster(postersArray.getJSONObject(i))
+                if (isPromotional(poster)) logSkippedPromotionalTitle(poster.title)
+                else posters.add(poster)
             } catch (e: Exception) {
                 // Skip posters that fail to parse
                 continue
@@ -112,14 +117,7 @@ class SearchRepository : BaseRepository() {
         for (i in 0 until sourcesArray.length()) {
             try {
                 val sourceObj = sourcesArray.getJSONObject(i)
-                sources.add(
-                    Source(
-                        id = sourceObj.optInt("id", 0),
-                        quality = sourceObj.optString("quality", "Unknown"),
-                        type = sourceObj.optString("type", "Unknown"),
-                        url = sourceObj.optString("url", "")
-                    )
-                )
+                sources.add(MediaSourceParser.parse(sourceObj))
             } catch (e: Exception) {
                 // Skip sources that fail to parse
                 continue

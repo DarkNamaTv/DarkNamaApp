@@ -2,6 +2,7 @@ package com.dark.darknama.navigation
 
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FormatColorFill
 import androidx.compose.material.icons.filled.Info
@@ -19,8 +20,7 @@ sealed class AppScreens(
     val route: String,
     @StringRes val resourceId: Int,
     val icon: ImageVector? = null,
-    val showBottomBar: Boolean = true,
-    val showSidebar: Boolean = true
+    val showBottomBar: Boolean = true
 ) {
     data object Splash : AppScreens(
         route = "splash",
@@ -51,46 +51,40 @@ sealed class AppScreens(
         icon = Icons.Default.LiveTv
     )
 
-    // Settings is opened from the gear icon at the top of the screens
-    // instead of the bottom navigation bar / TV sidebar.
+    // Phone: header gear. TV: header gear or the dedicated sidebar item.
     data object Settings : AppScreens(
         route = "settings",
         resourceId = R.string.settings,
         icon = Icons.Default.Settings,
-        showBottomBar = true,
-        showSidebar = true
+        showBottomBar = true
     )
 
     data object SingleMovie : AppScreens(
         route = "single_movie/{movieId}",
         resourceId = R.string.movie_details,
         icon = Icons.Default.Movie,
-        showBottomBar = false,
-        showSidebar = false
+        showBottomBar = false
     )
     
     data object SingleSeries : AppScreens(
         route = "single_series/{seriesId}",
         resourceId = R.string.series_details,
         icon = Icons.Default.Tv,
-        showBottomBar = false,
-        showSidebar = false
+        showBottomBar = false
     )
 
     data object Favorites : AppScreens(
         route = "favorites",
         resourceId = R.string.favorites,
         icon = Icons.Default.Favorite,
-        showBottomBar = true,
-        showSidebar = true
+        showBottomBar = true
     )
 
     data object About : AppScreens(
         route = "about",
         resourceId = R.string.about,
         icon = Icons.Default.Info,
-        showBottomBar = false,
-        showSidebar = false
+        showBottomBar = false
     )
 
     // ---- Settings sub-pages ----
@@ -100,36 +94,49 @@ sealed class AppScreens(
         route = "settings/theme",
         resourceId = R.string.theme_settings,
         icon = Icons.Default.FormatColorFill,
-        showBottomBar = false,
-        showSidebar = false
+        showBottomBar = false
     )
 
     data object PlayerSettings : AppScreens(
         route = "settings/player",
         resourceId = R.string.video_player_settings,
         icon = Icons.Default.Subtitles,
-        showBottomBar = false,
-        showSidebar = false
+        showBottomBar = false
+    )
+
+    data object ServerSettings : AppScreens(
+        route = "settings/server",
+        resourceId = R.string.server_settings,
+        icon = Icons.Default.Dns,
+        showBottomBar = false
     )
 
     data object FontSettings : AppScreens(
         route = "settings/font",
         resourceId = R.string.font_settings,
         icon = Icons.Default.TextFields,
-        showBottomBar = false,
-        showSidebar = false
+        showBottomBar = false
     )
     
     data object Country : AppScreens(
         route = "country/{countryId}",
         resourceId = R.string.country,
-        showBottomBar = false,
-        showSidebar = false
+        showBottomBar = false
     )
 
     companion object {
-        // Screens shown in the bottom navigation bar (mobile) and sidebar (TV).
-        // Settings moved to a gear icon at the top of each screen.
+        // The phone bar stays unchanged; TV can also navigate directly to Settings.
         val screens = listOf(Movies, Series, LiveTv, Search, Favorites)
+        val sidebarScreens = screens + Settings
+
+        /** Keep the parent section highlighted while visiting a detail or settings page. */
+        fun sectionForRoute(route: String?): AppScreens = when {
+            route == Series.route || route?.startsWith("single_series/") == true -> Series
+            route == LiveTv.route -> LiveTv
+            route == Search.route || route?.startsWith("country/") == true -> Search
+            route == Favorites.route -> Favorites
+            route == Settings.route || route == About.route || route?.startsWith("settings/") == true -> Settings
+            else -> Movies
+        }
     }
 }

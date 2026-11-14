@@ -1,5 +1,7 @@
 package com.dark.darknama.data.repository
 
+import android.content.Context
+
 import com.dark.darknama.data.model.Genre
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -7,8 +9,8 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 
-class GenreRepository : BaseRepository() {
-    private val GENRE_URL = "https://server-hi-speed-iran.info/api/genre/all"
+class GenreRepository(context: Context) : BaseRepository(context) {
+    private val GENRE_URL = "${com.dark.darknama.data.model.ServerSettings.DEFAULT_SERVER_1}/api/genre/all"
     
     suspend fun getGenres(): List<Genre> {
         return withContext(Dispatchers.IO) {

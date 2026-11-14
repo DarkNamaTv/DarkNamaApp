@@ -1,11 +1,14 @@
 package com.dark.darknama.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,13 +17,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -30,50 +36,67 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.AlertDialog
+import com.dark.darknama.ui.theme.GlassAlertDialog as AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.dark.darknama.ui.theme.GlassCard as Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
+import com.dark.darknama.R
+import com.dark.darknama.navigation.LocalTvFocusEntry
+import com.dark.darknama.navigation.LocalTvFocusRegistry
+import com.dark.darknama.navigation.tvFocusItem
+import com.dark.darknama.navigation.tvDialogInitialFocus
 import com.dark.darknama.VideoPlayerActivity
-import com.dark.darknama.components.DownloadOptionsDialog
+import com.dark.darknama.components.SourceDownloadOptions
+import com.dark.darknama.components.settingsFocusBorder
 import com.dark.darknama.components.ExpandableText
+import com.dark.darknama.components.tvFocusBorder
+import com.dark.darknama.components.copyTitleOnClick
 import com.dark.darknama.data.model.FavoriteItem
+import com.dark.darknama.data.model.MediaSourceSelection
 import com.dark.darknama.data.model.Episode
+import com.dark.darknama.data.model.EpisodeId
+import com.dark.darknama.data.model.PlaybackRecord
 import com.dark.darknama.data.model.Season
+import com.dark.darknama.data.model.SeriesLinkSelector
+import com.dark.darknama.data.model.SeriesLinkSelection
 import com.dark.darknama.data.model.Series
+import com.dark.darknama.data.repository.EpisodeLinkGroups
 import com.dark.darknama.data.model.Source
-import com.dark.darknama.data.model.WatchedEpisode
-import androidx.compose.material.icons.filled.Check
 import com.dark.darknama.ui.series.SeasonsViewModel
+import com.dark.darknama.utils.DeviceUtils
 import com.dark.darknama.utils.DownloadUtils
 import com.dark.darknama.utils.StorageUtils
 
@@ -87,28 +110,75 @@ fun SingleSeriesScreen(
     val context = LocalContext.current
     val seasonsViewModel: SeasonsViewModel = viewModel()
     var selectedEpisode by remember { mutableStateOf<Episode?>(null) }
+    var selectedEpisodeSeason by remember { mutableStateOf<Season?>(null) }
     var showSourceDialog by remember { mutableStateOf(false) }
     var showDownloadMenu by remember { mutableStateOf(false) }
     var downloadSources by remember { mutableStateOf<List<Source>>(emptyList()) }
-    var selectedSeasonIndex by remember { mutableStateOf(0) }
-    
+    var linkSelection by remember(seriesId) {
+        mutableStateOf(StorageUtils.loadSeriesLinkSelection(context, seriesId))
+    }
+    val selection = remember(seasonsViewModel.seasons, linkSelection) {
+        SeriesLinkSelector.normalize(seasonsViewModel.seasons, linkSelection)
+    }
+    var episodeHistory by remember(seriesId) { mutableStateOf<Map<EpisodeId, PlaybackRecord>>(emptyMap()) }
+    var startedEpisodeIds by remember(seriesId) { mutableStateOf<Set<EpisodeId>>(emptySet()) }
+
     LaunchedEffect(seriesId) {
         series = StorageUtils.loadSeriesFromFile(context, seriesId)
         seasonsViewModel.loadSeasons(seriesId)
     }
+    // Focus the new back control when the initial loading layout is replaced.
+    val focusRegistry = LocalTvFocusRegistry.current
+    val focusEntry = LocalTvFocusEntry.current
+    LaunchedEffect(series?.id, focusEntry) {
+        if (series != null && DeviceUtils.isTv(context)) {
+            withFrameNanos { }
+            focusRegistry?.restore(focusEntry)
+        }
+    }
+
+    LaunchedEffect(seasonsViewModel.loadedSeriesId, selection) {
+        if (seasonsViewModel.loadedSeriesId == seriesId && selection != linkSelection) {
+            linkSelection = selection // Keep a valid choice after season/quality data changes.
+            StorageUtils.saveSeriesLinkSelection(context, seriesId, selection)
+        }
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, context, seriesId) {
+        fun refreshProgress() {
+            episodeHistory = StorageUtils.loadPlaybackHistory(context)
+                .filter { it.type == "series" && it.contentId == seriesId &&
+                    it.seasonId != null && it.episodeId != null }
+                .associateBy { EpisodeId(it.seasonId!!, it.episodeId!!) }
+            startedEpisodeIds = StorageUtils.loadAllWatchedEpisodes(context)
+                .filter { it.seriesId == seriesId }
+                .map { EpisodeId(it.seasonId, it.episodeId) }.toSet()
+        }
+        refreshProgress()
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refreshProgress()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    fun chooseSeason(seasonId: Int) {
+        linkSelection = SeriesLinkSelector.chooseSeason(seasonsViewModel.seasons, linkSelection, seasonId)
+        StorageUtils.saveSeriesLinkSelection(context, seriesId, linkSelection)
+    }
+
+    fun chooseQuality(quality: String) {
+        linkSelection = SeriesLinkSelector.chooseQuality(seasonsViewModel.seasons, linkSelection, quality)
+        StorageUtils.saveSeriesLinkSelection(context, seriesId, linkSelection)
+    }
     
     // Source selection dialog
-    if (showSourceDialog && selectedEpisode != null && series != null) {
-        val selectedSeason = seasonsViewModel.seasons[selectedSeasonIndex]
+    if (showSourceDialog && selectedEpisode != null && series != null && selectedEpisodeSeason != null) {
+        val selectedSeason = selectedEpisodeSeason!!
         SourceOptionsDialog(
             episode = selectedEpisode!!,
-            series = series!!,
-            season = selectedSeason,
             onDismiss = { showSourceDialog = false },
-            onDownload = { source ->
-                showSourceDialog = false
-                openUrlSeries(context, source.url)
-            },
             onPlay = { source ->
                 showSourceDialog = false
                 // Launch video player activity with the selected source URL and episode info
@@ -117,7 +187,12 @@ fun SingleSeriesScreen(
                     source.url,
                     series!!.id,
                     selectedSeason.id,
-                    selectedEpisode!!.id
+                    selectedEpisode!!.id,
+                    source.type,
+                    seriesTitle = series!!.title, seasonTitle = selectedSeason.title,
+                    episodeTitle = selectedEpisode!!.title,
+                    image = selectedEpisode!!.image.ifBlank { series!!.image },
+                    quality = source.quality
                 )
             }
         )
@@ -127,11 +202,7 @@ fun SingleSeriesScreen(
     if (showDownloadMenu && downloadSources.isNotEmpty()) {
         DownloadMenu(
             sources = downloadSources,
-            onDismiss = { showDownloadMenu = false },
-            onDownload = { source ->
-                showDownloadMenu = false
-                openUrlSeries(context, source.url)
-            }
+            onDismiss = { showDownloadMenu = false }
         )
     }
     
@@ -140,37 +211,51 @@ fun SingleSeriesScreen(
         SeriesDetailsContent(
             series = series!!,
             seasonsViewModel = seasonsViewModel,
+            selection = selection,
+            episodeHistory = episodeHistory,
+            startedEpisodeIds = startedEpisodeIds,
+            onSeasonSelected = ::chooseSeason,
+            onQualitySelected = ::chooseQuality,
+            onCopyLinks = { links ->
+                if (links.isNotEmpty()) {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText(
+                        context.getString(R.string.episode_links_clipboard), links.joinToString("\n")
+                    ))
+                    Toast.makeText(
+                        context,
+                        context.resources.getQuantityString(
+                            R.plurals.episode_links_copied, links.size, links.size
+                        ),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            },
             onBackClick = { navController.popBackStack() },
-            onEpisodeClick = { episode ->
-                if (episode.sources.isNotEmpty() && series != null) {
-                    val selectedSeason = seasonsViewModel.seasons[selectedSeasonIndex]
-                    if (episode.sources.size > 1) {
-                        // Show source selection dialog if there are multiple sources
-                        selectedEpisode = episode
+            onEpisodeClick = { season, episode ->
+                val playable = episode.copy(sources = episode.sources.filter { it.url.isNotBlank() })
+                if (playable.sources.isNotEmpty()) {
+                    if (playable.sources.size > 1) {
+                        selectedEpisode = playable
+                        selectedEpisodeSeason = season
                         showSourceDialog = true
                     } else {
-                        // Directly play if there's only one source
+                        val source = playable.sources.first()
                         VideoPlayerActivity.startWithEpisodeInfo(
-                            context, 
-                            episode.sources[0].url,
-                            series!!.id,
-                            selectedSeason.id,
-                            episode.id
+                            context, source.url, series!!.id, season.id, episode.id, source.type,
+                            seriesTitle = series!!.title, seasonTitle = season.title,
+                            episodeTitle = episode.title,
+                            image = episode.image.ifBlank { series!!.image },
+                            quality = source.quality
                         )
                     }
                 }
             },
-            onDownloadClick = { episode ->
-                if (episode.sources.isNotEmpty()) {
-                    if (episode.sources.size > 1) {
-                        // Show download menu if there are multiple sources
-                        downloadSources = episode.sources
-                        showDownloadMenu = true
-                    } else {
-                        // Show download options even for single source
-                        downloadSources = episode.sources
-                        showDownloadMenu = true
-                    }
+            onDownloadClick = { _, episode ->
+                val links = episode.sources.filter { it.url.isNotBlank() }
+                if (links.isNotEmpty()) {
+                    downloadSources = links
+                    showDownloadMenu = true
                 }
             },
             modifier = Modifier.fillMaxSize()
@@ -185,14 +270,16 @@ fun SingleSeriesScreen(
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                IconButton(onClick = { navController.popBackStack() }) {
+                IconButton(onClick = { navController.popBackStack() },
+                    modifier = Modifier.tvFocusItem("series-back", initial = true)
+                        .tvFocusBorder(CircleShape)) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Back"
                     )
                 }
                 Text(
-                    text = "Series not found",
+                    text = stringResource(R.string.series_not_found),
                     style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.padding(top = 16.dp)
@@ -205,201 +292,126 @@ fun SingleSeriesScreen(
 @Composable
 fun SourceOptionsDialog(
     episode: Episode,
-    series: Series,
-    season: Season,
     onDismiss: () -> Unit,
-    onDownload: (Source) -> Unit,
     onPlay: (Source) -> Unit
 ) {
-    val context = LocalContext.current
-    var selectedSource by remember { mutableStateOf<Source?>(null) }
-    var showDownloadOptions by remember { mutableStateOf(false) }
-    
-    if (showDownloadOptions && selectedSource != null) {
-        DownloadOptionsDialog(
-            source = selectedSource!!,
-            onDismiss = { showDownloadOptions = false },
-            onCopyLink = { DownloadUtils.copyToClipboard(context, selectedSource!!.url) },
-            onDownloadWithBrowser = { DownloadUtils.openUrl(context, selectedSource!!.url) },
-            onDownloadWithADM = { DownloadUtils.openWithADM(context, selectedSource!!.url) },
-            onOpenInVLC = { DownloadUtils.openWithVLC(context, selectedSource!!.url) },
-            onOpenInMXPlayer = { DownloadUtils.openWithMXPlayer(context, selectedSource!!.url) },
-            onOpenInKMPlayer = { DownloadUtils.openWithKMPlayer(context, selectedSource!!.url) }
-        )
-    }
-    
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = "Episode: ${episode.title}",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
-            )
-        },
-        text = {
-            Text(
-                text = "Choose quality to play",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        },
+        title = { Text(stringResource(R.string.episode_label, episode.title),
+            style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) },
+        text = { Text(stringResource(R.string.choose_quality_play),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant) },
         confirmButton = {
             Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Play buttons for each source/quality
-                episode.sources.forEach { source ->
-                    Button(
-                        onClick = { onPlay(source) },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
-                        elevation = androidx.compose.material3.ButtonDefaults.elevatedButtonElevation()
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "Play",
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Play ${source.quality}")
+                episode.sources.forEachIndexed { index, source ->
+                    val interaction = remember(source.url) { MutableInteractionSource() }
+                    val focused by interaction.collectIsFocusedAsState()
+                    Button(onClick = { onPlay(source) }, interactionSource = interaction,
+                        modifier = (if (index == 0) Modifier.tvDialogInitialFocus() else Modifier)
+                            .fillMaxWidth().settingsFocusBorder(focused, RoundedCornerShape(16.dp)),
+                        shape = RoundedCornerShape(16.dp)) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null,
+                            modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (MediaSourceSelection.hasNamedQuality(source.quality))
+                            stringResource(R.string.play_quality, source.quality)
+                            else stringResource(R.string.play_episode), modifier = Modifier.weight(1f))
                     }
                 }
-                
-                // Cancel button
-                TextButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Text("Cancel")
+                TextButton(onClick = onDismiss,
+                    modifier = (if (episode.sources.isEmpty()) Modifier.tvDialogInitialFocus()
+                        else Modifier).fillMaxWidth().tvFocusBorder(CircleShape)) {
+                    Text(stringResource(R.string.cancel))
                 }
             }
         },
         containerColor = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(20.dp),
-        tonalElevation = 6.dp
+        shape = RoundedCornerShape(20.dp), tonalElevation = 6.dp
     )
 }
 
+/** Pick one real link; the next step keeps the existing browser/ADM/external-player actions. */
 @Composable
 fun DownloadMenu(
-    sources: List<Source>,
-    onDismiss: () -> Unit,
-    onDownload: (Source) -> Unit
+    sources: List<Source>, onDismiss: () -> Unit
 ) {
-    val context = LocalContext.current
-    var selectedSource by remember { mutableStateOf<Source?>(null) }
-    var showDownloadOptions by remember { mutableStateOf(false) }
-    
-    // If there's only one source, directly set it as selected and show download options
-    LaunchedEffect(sources) {
-        if (sources.size == 1) {
-            selectedSource = sources[0]
-            showDownloadOptions = true
-        }
+    if (sources.isEmpty()) return
+    var selectedSource by remember(sources) {
+        mutableStateOf(if (sources.size == 1) sources.first() else null)
     }
-    
-    if (showDownloadOptions && selectedSource != null) {
-        DownloadOptionsDialog(
-            source = selectedSource!!,
-            onDismiss = { 
-                showDownloadOptions = false
-                // If we only had one source, also dismiss the menu
-                if (sources.size == 1) {
-                    onDismiss()
-                }
-            },
-            onCopyLink = { DownloadUtils.copyToClipboard(context, selectedSource!!.url) },
-            onDownloadWithBrowser = { DownloadUtils.openUrl(context, selectedSource!!.url) },
-            onDownloadWithADM = { DownloadUtils.openWithADM(context, selectedSource!!.url) },
-            onOpenInVLC = { DownloadUtils.openWithVLC(context, selectedSource!!.url) },
-            onOpenInMXPlayer = { DownloadUtils.openWithMXPlayer(context, selectedSource!!.url) },
-            onOpenInKMPlayer = { DownloadUtils.openWithKMPlayer(context, selectedSource!!.url) }
-        )
-    }
-    
-    // Only show the quality selection if there are multiple sources
-    if (sources.size > 1) {
-        AlertDialog(
-            onDismissRequest = onDismiss,
-            title = {
-                Text(
-                    text = "Select Quality to Download",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                Text(
-                    text = "Choose a quality option for download",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            },
-            confirmButton = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    sources.forEach { source ->
-                        Button(
-                            onClick = { 
-                                selectedSource = source
-                                showDownloadOptions = true
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                            ),
-                            elevation = androidx.compose.material3.ButtonDefaults.elevatedButtonElevation()
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Download,
-                                contentDescription = "Download",
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("${source.quality}")
-                        }
-                    }
-                    
-                    // Cancel button
-                    TextButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp)
+    selectedSource?.let { source ->
+        SourceDownloadOptions(source, onDismiss)
+    } ?: AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.media_pick_link),
+            style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) },
+        text = { Text(stringResource(R.string.choose_download_link),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant) },
+        confirmButton = {
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                sources.forEachIndexed { index, source ->
+                    val interaction = remember(source.url) { MutableInteractionSource() }
+                    val focused by interaction.collectIsFocusedAsState()
+                    Button(
+                        onClick = { selectedSource = source }, interactionSource = interaction,
+                        modifier = (if (index == 0) Modifier.tvDialogInitialFocus() else Modifier)
+                            .fillMaxWidth().settingsFocusBorder(focused, RoundedCornerShape(16.dp)),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer)
                     ) {
-                        Text("Cancel")
+                        Icon(Icons.Default.Download, contentDescription = null,
+                            modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (MediaSourceSelection.hasNamedQuality(source.quality))
+                            stringResource(R.string.media_source_option, index + 1, source.quality)
+                            else stringResource(R.string.media_link_without_quality, index + 1),
+                            modifier = Modifier.weight(1f), maxLines = 2)
                     }
                 }
-            },
-            containerColor = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(20.dp),
-            tonalElevation = 6.dp
-        )
-    }
+                TextButton(onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth().tvFocusBorder(CircleShape)) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        },
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(20.dp), tonalElevation = 6.dp
+    )
 }
-
 
 @Composable
 fun SeriesDetailsContent(
     series: Series,
     seasonsViewModel: SeasonsViewModel,
+    selection: SeriesLinkSelection,
+    episodeHistory: Map<EpisodeId, PlaybackRecord>,
+    startedEpisodeIds: Set<EpisodeId>,
+    onSeasonSelected: (Int) -> Unit,
+    onQualitySelected: (String) -> Unit,
+    onCopyLinks: (List<String>) -> Unit,
     onBackClick: () -> Unit,
-    onEpisodeClick: (Episode) -> Unit,
-    onDownloadClick: (Episode) -> Unit,
+    onEpisodeClick: (Season, Episode) -> Unit,
+    onDownloadClick: (Season, Episode) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val layoutDirection = LocalLayoutDirection.current
-    var selectedSeasonIndex by remember { mutableStateOf(0) }
-    var showEpisodeImageDialog by remember { mutableStateOf(false) }
-    var episodeImageUrl by remember { mutableStateOf("") }
-    
+    val selectedSeason = seasonsViewModel.seasons.firstOrNull { it.id == selection.seasonId }
+    val episodeRows = remember(selectedSeason) {
+        selectedSeason?.let { EpisodeLinkGroups.orderedEpisodes(it.episodes) }.orEmpty()
+    }
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -460,6 +472,8 @@ fun SeriesDetailsContent(
                         contentDescription = series.title,
                         modifier = Modifier
                             .height(200.dp)
+                            .tvFocusItem("series-poster")
+                            .tvFocusBorder(RoundedCornerShape(8.dp))
                             .clip(RoundedCornerShape(8.dp))
                             .clickable { showImageDialog = true },
                         contentScale = ContentScale.Fit
@@ -473,6 +487,7 @@ fun SeriesDetailsContent(
                             text = { Text("Choose an action for this image") },
                             confirmButton = {
                                 TextButton(
+                                    modifier = Modifier.tvFocusBorder(CircleShape),
                                     onClick = {
                                         DownloadUtils.copyToClipboard(context, series.image)
                                         showImageDialog = false
@@ -483,9 +498,10 @@ fun SeriesDetailsContent(
                             },
                             dismissButton = {
                                 TextButton(
-                                    onClick = { showImageDialog = false }
+                                    onClick = { showImageDialog = false },
+                                    modifier = Modifier.tvDialogInitialFocus().tvFocusBorder(CircleShape)
                                 ) {
-                                    Text("Cancel")
+                                    Text(stringResource(R.string.cancel))
                                 }
                             }
                         )
@@ -502,7 +518,9 @@ fun SeriesDetailsContent(
                             text = series.title,
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.tvFocusItem("series-copy-title")
+                                .copyTitleOnClick(series.title)
                         )
                         
                         // Country and year
@@ -545,13 +563,16 @@ fun SeriesDetailsContent(
                 IconButton(
                     onClick = onBackClick,
                     modifier = Modifier
+                        .tvFocusItem("series-back", initial = true)
                         .padding(16.dp)
                         .align(Alignment.TopStart)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f), CircleShape)
+                        .tvFocusBorder(CircleShape)
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = MaterialTheme.colorScheme.onSurface
+                        contentDescription = stringResource(R.string.back),
+                        tint = MaterialTheme.colorScheme.primary
                     )
                 }
                 
@@ -575,6 +596,7 @@ fun SeriesDetailsContent(
                         text = { Text("Are you sure you want to remove this series from your favorites?") },
                         confirmButton = {
                             TextButton(
+                                modifier = Modifier.tvFocusBorder(CircleShape),
                                 onClick = {
                                     StorageUtils.removeFavorite(context, seriesId, "series")
                                     isFavorite = false
@@ -588,9 +610,10 @@ fun SeriesDetailsContent(
                         },
                         dismissButton = {
                             TextButton(
-                                onClick = { showRemoveFavoriteDialog = false }
+                                onClick = { showRemoveFavoriteDialog = false },
+                                modifier = Modifier.tvDialogInitialFocus().tvFocusBorder(CircleShape)
                             ) {
-                                Text("Cancel")
+                                Text(stringResource(R.string.cancel))
                             }
                         }
                     )
@@ -623,9 +646,10 @@ fun SeriesDetailsContent(
                             android.widget.Toast.makeText(context, "Added to favorites", android.widget.Toast.LENGTH_SHORT).show()
                         }
                     },
-                    modifier = Modifier
+                    modifier = Modifier.tvFocusItem("series-favorite")
                         .padding(16.dp)
                         .align(Alignment.TopEnd)
+                        .tvFocusBorder(CircleShape)
                 ) {
                     Icon(
                         imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
@@ -640,7 +664,7 @@ fun SeriesDetailsContent(
             // Genres
             if (series.genres.isNotEmpty()) {
                 Text(
-                    text = "Genres",
+                    text = stringResource(R.string.genres_label),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -693,7 +717,7 @@ fun SeriesDetailsContent(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Description",
+                    text = stringResource(R.string.description_label),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
@@ -713,276 +737,40 @@ fun SeriesDetailsContent(
             }
         }
         
-        // Seasons selection
-        if (seasonsViewModel.seasons.isNotEmpty()) {
-            item {
-                Text(
-                    text = "Seasons",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp)
-                )
-            }
-            
-            item {
-                LazyRow(
-                    modifier = Modifier
-                        .padding(start = 16.dp, end = 16.dp, top = 8.dp)
-                        .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(seasonsViewModel.seasons.size) { index ->
-                        val season = seasonsViewModel.seasons[index]
-                        Card(
-                            modifier = Modifier
-                                .clickable { selectedSeasonIndex = index },
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (selectedSeasonIndex == index) 
-                                    MaterialTheme.colorScheme.primary 
-                                else 
-                                    MaterialTheme.colorScheme.surfaceVariant
-                            ),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier
-                                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                            ) {
-                                Text(
-                                    text = season.title,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = if (selectedSeasonIndex == index) 
-                                        MaterialTheme.colorScheme.onPrimary 
-                                    else 
-                                        MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+        item(key = "episode-header") {
+            SeriesEpisodeHeader(
+                seasons = seasonsViewModel.seasons,
+                isLoading = seasonsViewModel.isLoading,
+                errorMessage = seasonsViewModel.errorMessage,
+                selection = selection,
+                onRetry = { seasonsViewModel.loadSeasons(series.id) },
+                onSeasonSelected = onSeasonSelected,
+                onQualitySelected = onQualitySelected,
+                onCopyLinks = onCopyLinks,
+                onDownloadClick = onDownloadClick
+            )
         }
-        
-        // Episodes of selected season
-        item {
-            if (seasonsViewModel.isLoading) {
-                Text(
-                    text = "Loading seasons...",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(16.dp)
-                )
-            } else if (seasonsViewModel.errorMessage != null) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "Error loading seasons: ${seasonsViewModel.errorMessage}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(16.dp)
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Button(
-                        onClick = { seasonsViewModel.loadSeasons(series.id) },
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        Text("Retry")
-                    }
-                }
-            } else if (seasonsViewModel.seasons.isNotEmpty()) {
-                val selectedSeason = seasonsViewModel.seasons[selectedSeasonIndex]
-                Column {
-                    Text(
-                        text = selectedSeason.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp)
-                    )
-                    
-                    selectedSeason.episodes.forEach { episode ->
-                        val isEpisodeWatched = StorageUtils.isEpisodeWatched(context, series.id, selectedSeason.id, episode.id)
-                        EpisodeItem(
-                            episode = episode,
-                            isWatched = isEpisodeWatched,
-                            onPlayClick = { onEpisodeClick(episode) },
-                            onDownloadClick = { onDownloadClick(episode) },
-                            onImageClick = { imageUrl ->
-                                episodeImageUrl = imageUrl
-                                showEpisodeImageDialog = true
-                            }
-                        )
-                    }
-                }
-            } else {
-                Text(
-                    text = "No seasons available",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(16.dp)
+        if (selectedSeason != null && seasonsViewModel.loadedSeriesId == series.id &&
+            !seasonsViewModel.isLoading && seasonsViewModel.errorMessage == null) {
+            itemsIndexed(episodeRows,
+                key = { index, episode -> "episode-${selectedSeason.id}-${episode.id}-$index" }
+            ) { index, episode ->
+                val episodeId = EpisodeId(selectedSeason.id, episode.id)
+                SeriesEpisodeRow(
+                    episode = episode,
+                    focusKey = "episode-${selectedSeason.id}-${episode.id}-$index",
+                    selectedQuality = selection.quality,
+                    history = episodeHistory[episodeId],
+                    legacyStarted = episodeId in startedEpisodeIds,
+                    onPlay = { chosen -> onEpisodeClick(selectedSeason, chosen) },
+                    onDownload = { chosen -> onDownloadClick(selectedSeason, chosen) },
+                    onCopyLinks = onCopyLinks
                 )
             }
         }
-        
+
         item {
             Spacer(modifier = Modifier.height(16.dp))
-        }
-    }
-}
-
-@Composable
-fun EpisodeItem(
-    episode: Episode,
-    isWatched: Boolean,
-    onPlayClick: () -> Unit,
-    onDownloadClick: () -> Unit,
-    onImageClick: (String) -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isWatched) 
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-            else 
-                MaterialTheme.colorScheme.surfaceVariant,
-        )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Episode image
-                if (episode.image.isNotEmpty()) {
-                    Box {
-                        Image(
-                            painter = rememberAsyncImagePainter(
-                                ImageRequest.Builder(LocalContext.current)
-                                    .data(episode.image)
-                                    .crossfade(true)
-                                    .build()
-                            ),
-                            contentDescription = episode.title,
-                            modifier = Modifier
-                                .size(60.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { onImageClick(episode.image) },
-                            contentScale = ContentScale.Crop
-                        )
-                        
-                        // Watched indicator overlay
-                        if (isWatched) {
-                            Box(
-                                modifier = Modifier
-                                    .size(20.dp)
-                                    .align(Alignment.TopEnd)
-                                    .background(
-                                        color = MaterialTheme.colorScheme.primary,
-                                        shape = RoundedCornerShape(10.dp)
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = "Watched",
-                                    tint = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                            }
-                        }
-                    }
-                    
-                    Spacer(modifier = Modifier.width(12.dp))
-                }
-                
-                // Episode details
-                Column(
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        text = episode.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    
-                    // Show source count if there are multiple sources
-                    if (episode.sources.size > 1) {
-                        Text(
-                            text = "${episode.sources.size} qualities available",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    
-                    // Watched status text
-                    if (isWatched) {
-                        Text(
-                            text = "Watched",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-            }
-            
-            // Action buttons
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.End
-            ) {
-                // Download button
-                if (episode.sources.isNotEmpty()) {
-                    IconButton(
-                        onClick = { onDownloadClick() },
-                        modifier = Modifier
-                            .size(36.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Download,
-                            contentDescription = "Download",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-                
-                Spacer(modifier = Modifier.width(8.dp))
-                
-                // Play button
-                IconButton(
-                    onClick = { onPlayClick() },
-                    modifier = Modifier
-                        .size(36.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Play",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
         }
     }
 }

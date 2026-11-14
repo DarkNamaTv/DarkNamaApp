@@ -1,6 +1,5 @@
 package com.dark.darknama.components
 
-import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.size
@@ -14,12 +13,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.dark.darknama.R
 import com.dark.darknama.navigation.AppScreens
+import com.dark.darknama.utils.DeviceUtils
 
 /**
  * Settings gear button shown at the top of the main screens.
@@ -42,17 +42,13 @@ fun SettingsIconButton(
         },
         interactionSource = interactionSource,
         modifier = modifier
-            .size(40.dp)
-            .border(
-                width = if (isFocused) 2.dp else 0.dp,
-                color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                shape = CircleShape
-            )
+            .size(if (DeviceUtils.isTv(LocalContext.current)) 48.dp else 40.dp)
+            .settingsFocusBorder(isFocused, CircleShape)
     ) {
         Icon(
             imageVector = Icons.Default.Settings,
             contentDescription = stringResource(R.string.settings),
-            tint = if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(24.dp)
         )
     }

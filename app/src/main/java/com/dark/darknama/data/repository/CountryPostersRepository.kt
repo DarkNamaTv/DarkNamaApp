@@ -1,53 +1,65 @@
 package com.dark.darknama.data.repository
 
+import android.content.Context
+
 import com.dark.darknama.data.model.FilterType
 import com.dark.darknama.data.model.Poster
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 
-class CountryPostersRepository : BaseRepository() {
-    private val BASE_URL = "https://server-hi-speed-iran.info/api/poster/by/filtres"
+class CountryPostersRepository(context: Context) : BaseRepository(context) {
+    private val BASE_URL = "${com.dark.darknama.data.model.ServerSettings.DEFAULT_SERVER_1}/api/poster/by/filtres"
     
-    suspend fun getPostersByCountry(countryId: Int, page: Int = 0, filterType: FilterType = FilterType.DEFAULT): List<Poster> {
-        return withContext(Dispatchers.IO) {
+    suspend fun getPostersByCountry(countryId: Int, page: Int = 0,
+                                    filterType: FilterType = FilterType.DEFAULT): List<Poster> =
+        getPosterBatch(countryId, page, filterType).items
+
+    suspend fun getPosterBatch(countryId: Int, page: Int = 0,
+                               filterType: FilterType = FilterType.DEFAULT,
+                               genreId: Int = 0): FilteredPage<Poster> =
+        withContext(Dispatchers.IO) {
             try {
-                val url = buildUrl(countryId, filterType, page)
-                
-                val jsonData = executeRequest(url) { Request.Builder().url(it).build() }
-                
-                parsePosters(jsonData)
+                fetchFilteredPages(
+                    startPage = page,
+                    fetchPage = { nextPage ->
+                        val url = buildUrl(countryId, filterType, nextPage, genreId)
+                        parsePosters(executeRequest(url) { Request.Builder().url(it).build() })
+                    },
+                    isExcluded = { isPromotional(it) },
+                    onExcluded = { logSkippedPromotionalTitle(it.title) }
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
-                throw Exception("Error fetching posters for country $countryId: ${e.message}")
+                throw IOException("Error fetching posters for country $countryId", e)
             }
         }
-    }
     
-    private fun buildUrl(countryId: Int, filterType: FilterType, page: Int): String {
+    private fun buildUrl(countryId: Int, filterType: FilterType, page: Int, genreId: Int): String {
         return when (filterType) {
-            FilterType.DEFAULT -> "$BASE_URL/0/$countryId/created/$page/$API_KEY"
-            FilterType.BY_YEAR -> "$BASE_URL/0/$countryId/year/$page/$API_KEY"
-            FilterType.BY_IMDB -> "$BASE_URL/0/$countryId/imdb/$page/$API_KEY"
+            FilterType.DEFAULT -> "$BASE_URL/$genreId/$countryId/created/$page/$API_KEY"
+            FilterType.BY_YEAR -> "$BASE_URL/$genreId/$countryId/year/$page/$API_KEY"
+            FilterType.BY_IMDB -> "$BASE_URL/$genreId/$countryId/imdb/$page/$API_KEY"
         }
     }
     
-    private fun parsePosters(jsonData: String): List<Poster> {
+    private fun parsePosters(jsonData: String): FeedPage<Poster> {
         val posters = mutableListOf<Poster>()
         val jsonArray = JSONArray(jsonData)
-        
+
         for (i in 0 until jsonArray.length()) {
             try {
-                val posterObj = jsonArray.getJSONObject(i)
-                posters.add(parsePoster(posterObj))
-            } catch (e: Exception) {
-                // Skip posters that fail to parse
-                continue
+                posters.add(parsePoster(jsonArray.getJSONObject(i)))
+            } catch (_: Exception) {
+                // An invalid entry does not mark the end of the raw API feed.
             }
         }
-        
-        return posters
+        return FeedPage(posters, hasMore = jsonArray.length() > 0)
     }
     
     private fun parsePoster(posterObj: JSONObject): Poster {
@@ -83,14 +95,7 @@ class CountryPostersRepository : BaseRepository() {
                 val sources = mutableListOf<com.dark.darknama.data.model.Source>()
                 for (j in 0 until sourcesArray.length()) {
                     val sourceObj = sourcesArray.getJSONObject(j)
-                    sources.add(
-                        com.dark.darknama.data.model.Source(
-                            id = sourceObj.optInt("id", 0),
-                            quality = sourceObj.optString("quality", "Unknown"),
-                            type = sourceObj.optString("type", "Unknown"),
-                            url = sourceObj.optString("url", "")
-                        )
-                    )
+                    sources.add(MediaSourceParser.parse(sourceObj))
                 }
                 sources
             } catch (e: Exception) {

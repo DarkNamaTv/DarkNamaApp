@@ -6,6 +6,8 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
+import android.view.KeyEvent as AndroidKeyEvent
+import android.view.inputmethod.InputMethodManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -27,7 +29,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -41,7 +45,7 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.dark.darknama.ui.theme.GlassCard as Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -78,7 +82,13 @@ import androidx.navigation.NavController
 import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 import com.dark.darknama.R
+import com.dark.darknama.navigation.tvFocusItem
+import com.dark.darknama.components.tvBringIntoViewOnFocus
+import com.dark.darknama.components.tvFocusBorder
+import com.dark.darknama.components.goldFocusColor
 import com.dark.darknama.components.SettingsIconButton
+import com.dark.darknama.components.copyTitleOnClick
+import com.dark.darknama.components.CompactPosterCard
 import com.dark.darknama.data.model.Country
 import com.dark.darknama.data.model.Poster
 import com.dark.darknama.ui.search.SearchViewModel
@@ -93,21 +103,27 @@ fun SearchScreen(
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
-    val isTv = remember { DeviceUtils.isTv(context) }
+    val submitFocusRequester = remember { FocusRequester() }
+    val isTv = remember(context) { DeviceUtils.isTv(context) }
     
     // Request focus when the screen is first displayed (mobile only; on TV the
     // native EditText handles its own focus and IME)
     LaunchedEffect(Unit) {
         if (!isTv) {
-            focusRequester.requestFocus()
+            // The search field is now a lazy header and may not be attached
+            // until the first layout frame.
+            androidx.compose.runtime.withFrameNanos { }
+            try { focusRequester.requestFocus() } catch (_: IllegalStateException) { }
         }
     }
     
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
+    if (isTv) {
+        TvSearchResultsContent(viewModel, navController, context)
+        return
+    }
+
+    val phoneHeader: @Composable () -> Unit = {
+    Column(Modifier.fillMaxWidth()) {
         // Top header with title and settings gear
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -120,7 +136,8 @@ fun SearchScreen(
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
             )
-            SettingsIconButton(navController = navController)
+            SettingsIconButton(navController = navController,
+                modifier = Modifier.tvFocusItem("search-settings", initial = true))
         }
         
         Spacer(modifier = Modifier.height(8.dp))
@@ -131,23 +148,42 @@ fun SearchScreen(
             // with the TV IME: D-pad events leave the on-screen keyboard and move
             // focus back to the app. A native EditText integrates properly with
             // the leanback keyboard, so we use one via AndroidView on TV.
-            TvSearchField(
-                query = viewModel.searchQuery,
-                placeholder = stringResource(R.string.search_placeholder),
-                onQueryChange = { viewModel.updateSearchQuery(it) },
-                onSearch = {
-                    if (viewModel.searchQuery.isNotEmpty()) {
-                        viewModel.triggerSearch()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TvSearchField(
+                    query = viewModel.searchQuery,
+                    placeholder = stringResource(R.string.search_placeholder),
+                    modifier = Modifier.weight(1f),
+                    onQueryChange = { viewModel.updateSearchQuery(it) },
+                    onSearch = {
+                        if (viewModel.searchQuery.isNotBlank()) viewModel.triggerSearch()
+                    }
+                )
+                IconButton(onClick = {
+                    if (viewModel.searchQuery.isNotBlank()) viewModel.triggerSearch()
+                }, modifier = Modifier.tvFocusItem("search-submit")
+                    .focusRequester(submitFocusRequester).size(48.dp).tvFocusBorder(CircleShape)) {
+                    Icon(Icons.Default.Search, contentDescription = stringResource(R.string.search))
+                }
+                if (viewModel.searchQuery.isNotEmpty()) {
+                    IconButton(onClick = {
+                        // The clear button disappears with the query; move focus to
+                        // the still-present search action before removing it.
+                        submitFocusRequester.requestFocus()
+                        viewModel.clearSearch()
+                    }, modifier = Modifier.tvFocusItem("search-clear")
+                            .size(48.dp).tvFocusBorder(CircleShape)) {
+                        Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.search_clear))
                     }
                 }
-            )
+            }
         } else {
             TextField(
                 value = viewModel.searchQuery,
                 onValueChange = { viewModel.updateSearchQuery(it) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .focusRequester(focusRequester),
+                    .focusRequester(focusRequester)
+                    .tvFocusBorder(RoundedCornerShape(24.dp)),
                 placeholder = { 
                     Text(
                         text = stringResource(R.string.search_placeholder),
@@ -161,10 +197,10 @@ fun SearchScreen(
                             viewModel.triggerSearch()
                             focusManager.clearFocus()
                         }
-                    }) {
+                    }, modifier = Modifier.tvFocusBorder(CircleShape)) {
                         Icon(
                             imageVector = Icons.Default.Search,
-                            contentDescription = "Search",
+                            contentDescription = stringResource(R.string.search),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -174,10 +210,10 @@ fun SearchScreen(
                         IconButton(onClick = { 
                             viewModel.clearSearch()
                             focusManager.clearFocus() // Dismiss keyboard when clearing search
-                        }) {
+                        }, modifier = Modifier.tvFocusBorder(CircleShape)) {
                             Icon(
                                 imageVector = Icons.Default.Clear,
-                                contentDescription = "Clear",
+                                contentDescription = stringResource(R.string.search_clear),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -228,7 +264,7 @@ fun SearchScreen(
                         .padding(top = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(viewModel.countries) { country ->
+                    items(viewModel.countries, key = { it.id }) { country ->
                         CountryStoryItem(
                             country = country,
                             onClick = {
@@ -243,6 +279,14 @@ fun SearchScreen(
         
         Spacer(modifier = Modifier.height(16.dp))
         
+    }
+    }
+    if (!viewModel.isLoading && viewModel.errorMessage == null && viewModel.searchResults.isNotEmpty()) {
+        SearchResultsGrid(viewModel.searchResults, navController, context, header = phoneHeader)
+    } else {
+        LazyColumn(Modifier.fillMaxSize().padding(16.dp)) {
+            item(key = "header") { phoneHeader() }
+            item(key = "state") {
         // Search results
         when {
             viewModel.isLoading -> {
@@ -278,19 +322,13 @@ fun SearchScreen(
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(
                             onClick = { viewModel.triggerSearch() },
-                            modifier = Modifier.padding(16.dp)
+                            modifier = Modifier.tvFocusItem("search-retry")
+                                .padding(16.dp).tvFocusBorder(CircleShape)
                         ) {
                             Text(stringResource(R.string.retry))
                         }
                     }
                 }
-            }
-            viewModel.searchResults.isNotEmpty() -> {
-                SearchResultsGrid(
-                    posters = viewModel.searchResults,
-                    navController = navController,
-                    context = context
-                )
             }
             // Only show "No results found" after a search has been performed
             viewModel.hasSearched && viewModel.searchQuery.isNotEmpty() && !viewModel.isLoading -> {
@@ -336,6 +374,8 @@ fun SearchScreen(
                 }
             }
         }
+            }
+        }
     }
 }
 
@@ -349,23 +389,27 @@ fun SearchScreen(
  * D-pad events for itself until the user confirms/dismisses it.
  */
 @Composable
-private fun TvSearchField(
+internal fun TvSearchField(
     query: String,
     placeholder: String,
+    modifier: Modifier = Modifier,
     onQueryChange: (String) -> Unit,
-    onSearch: () -> Unit
+    onSearch: () -> Unit,
+    requestInitialFocus: Boolean = false
 ) {
     val containerColor = MaterialTheme.colorScheme.surfaceVariant.toArgb()
     val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
     val hintColor = MaterialTheme.colorScheme.onSurfaceVariant.toArgb()
-    val focusedStrokeColor = MaterialTheme.colorScheme.primary.toArgb()
+    // The Android TV IME requires a native EditText; use the same fixed gold as Compose focus.
+    val focusedStrokeColor = goldFocusColor.toArgb()
 
     AndroidView(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         factory = { ctx ->
             EditText(ctx).apply {
                 hint = placeholder
                 setText(query)
+                setSelection(query.length)
                 isSingleLine = true
                 inputType = InputType.TYPE_CLASS_TEXT
                 imeOptions = EditorInfo.IME_ACTION_SEARCH or
@@ -380,18 +424,45 @@ private fun TvSearchField(
                 val padV = (14 * density).toInt()
                 setPadding(padH, padV, padH, padV)
 
-                fun buildBackground(focused: Boolean) =
-                    android.graphics.drawable.GradientDrawable().apply {
+                fun buildBackground(focused: Boolean): android.graphics.drawable.Drawable {
+                    val base = android.graphics.drawable.GradientDrawable().apply {
                         cornerRadius = 24 * density
                         setColor(containerColor)
-                        if (focused) {
-                            setStroke((2 * density).toInt(), focusedStrokeColor)
-                        }
+                        if (focused) setStroke((8 * density).toInt(), android.graphics.Color.BLACK)
                     }
+                    if (!focused) return base
+                    val gold = android.graphics.drawable.GradientDrawable().apply {
+                        cornerRadius = 24 * density
+                        setColor(android.graphics.Color.TRANSPARENT)
+                        setStroke((2.5f * density).toInt().coerceAtLeast(1), focusedStrokeColor)
+                    }
+                    // Native Android TV IME fallback: same gold + dark edge, no Compose blur.
+                    return android.graphics.drawable.LayerDrawable(arrayOf(base, gold))
+                }
 
                 background = buildBackground(false)
-                setOnFocusChangeListener { _, hasFocus ->
-                    background = buildBackground(hasFocus)
+                setOnFocusChangeListener { view, hasFocus ->
+                    // AndroidView hosts a native focus target, so Compose's input-mode
+                    // modifier cannot observe it. Do not draw gold for touch focus.
+                    background = buildBackground(hasFocus && !view.isInTouchMode)
+                }
+                setOnTouchListener { _, event ->
+                    if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
+                        background = buildBackground(false)
+                    }
+                    false // Preserve cursor movement and the native TV keyboard.
+                }
+                setOnKeyListener { _, keyCode, event ->
+                    val navigationKey = when (keyCode) {
+                        AndroidKeyEvent.KEYCODE_DPAD_UP, AndroidKeyEvent.KEYCODE_DPAD_DOWN,
+                        AndroidKeyEvent.KEYCODE_DPAD_LEFT, AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
+                        AndroidKeyEvent.KEYCODE_DPAD_CENTER, AndroidKeyEvent.KEYCODE_TAB -> true
+                        else -> false
+                    }
+                    if (navigationKey && event.action == AndroidKeyEvent.ACTION_DOWN) {
+                        background = buildBackground(true)
+                    }
+                    false // The EditText/IME still receives the key.
                 }
 
                 addTextChangedListener(object : TextWatcher {
@@ -408,16 +479,18 @@ private fun TvSearchField(
                     }
                 })
 
-                setOnEditorActionListener { _, actionId, _ ->
+                setOnEditorActionListener { _, actionId, keyEvent ->
                     if (actionId == EditorInfo.IME_ACTION_SEARCH ||
-                        actionId == EditorInfo.IME_ACTION_DONE
-                    ) {
+                        actionId == EditorInfo.IME_ACTION_DONE ||
+                        (keyEvent?.keyCode == AndroidKeyEvent.KEYCODE_ENTER &&
+                            keyEvent.action == AndroidKeyEvent.ACTION_UP)) {
                         onSearch()
+                        (ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                            ?.hideSoftInputFromWindow(windowToken, 0)
                         true
-                    } else {
-                        false
-                    }
+                    } else false
                 }
+                if (requestInitialFocus) post { requestFocus() }
             }
         },
         update = { editText ->
@@ -438,7 +511,9 @@ fun CountryStoryItem(
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.clickable { onClick() }
+        modifier = Modifier.tvFocusItem("search-country-${country.id}")
+            .tvBringIntoViewOnFocus().tvFocusBorder(RoundedCornerShape(12.dp))
+            .clickable { onClick() }
     ) {
         Box(
             modifier = Modifier
@@ -478,17 +553,21 @@ fun CountryStoryItem(
 fun SearchResultsGrid(
     posters: List<Poster>,
     navController: NavController?,
-    context: Context
+    context: Context,
+    header: @Composable () -> Unit = {}
 ) {
-    val columns = DeviceUtils.getGridColumns(LocalContext.current.resources)
+    val columns = DeviceUtils.getGridColumns(LocalContext.current)
+    // API pages can repeat a title. Keep each focus target and lazy key unique.
+    val uniquePosters = remember(posters) { posters.distinctBy { "${it.type}:${it.id}" } }
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
         contentPadding = PaddingValues(0.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        items(posters) { poster ->
+        item(key = "header", span = { GridItemSpan(maxLineSpan) }) { header() }
+        items(uniquePosters, key = { "${it.type}:${it.id}" }) { poster ->
             PosterItem(
                 poster = poster,
                 onClick = {
@@ -508,140 +587,11 @@ fun SearchResultsGrid(
 }
 
 @Composable
-fun PosterItem(
-    poster: Poster,
-    onClick: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(310.dp) // Fixed height for all cards
-            .clickable { onClick() },
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(12.dp)
-        ) {
-            // Poster image with rating overlay
-            Box {
-                Image(
-                    painter = rememberAsyncImagePainter(
-                        ImageRequest.Builder(LocalContext.current)
-                            .data(poster.image)
-                            .crossfade(true)
-                            .build()
-                    ),
-                    contentDescription = poster.title,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(180.dp)
-                        .clip(RoundedCornerShape(8.dp)),
-                    contentScale = ContentScale.Crop
-                )
-                
-                // Rating overlay at top-right corner
-                Card(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp),
-                    shape = RoundedCornerShape(50.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color.Black.copy(alpha = 0.7f)
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Star,
-                            contentDescription = "Rating",
-                            tint = Color.Yellow,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = String.format("%.1f", poster.imdb),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-                
-                // Type indicator at bottom-right corner
-                Card(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(8.dp),
-                    shape = RoundedCornerShape(50.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (poster.isMovie()) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.secondary
-                        }
-                    )
-                ) {
-                    Box(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = if (poster.isMovie()) "Movie" else "Series",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (poster.isMovie()) {
-                                MaterialTheme.colorScheme.onPrimary
-                            } else {
-                                MaterialTheme.colorScheme.onSecondary
-                            },
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(12.dp))
-            
-            // Poster details with weight to fill remaining space
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(
-                    text = poster.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                
-                Spacer(modifier = Modifier.height(4.dp))
-                
-                Text(
-                    text = poster.year.toString(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                // Genres
-                if (poster.genres.isNotEmpty()) {
-                    Text(
-                        text = poster.genres.joinToString(", ") { it.title },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
-    }
+fun PosterItem(poster: Poster, onClick: () -> Unit) {
+    CompactPosterCard(
+        title = poster.title, image = poster.image, imdb = poster.imdb,
+        year = poster.year,
+        typeLabel = stringResource(if (poster.isMovie()) R.string.card_movie else R.string.card_series),
+        onClick = onClick, focusKey = "search-${poster.type}-${poster.id}"
+    )
 }
