@@ -341,14 +341,12 @@ When watching videos on Android TV, you can control playback using your remote c
 3. **Quick Access**: The sidebar is always accessible for quick navigation between main sections
 4. **Exit App**: Press the **Back** button repeatedly until you exit the app
 
-## 📈 Repository Statistics
 
 <div align="center">
 
-### ⭐ Stars History
-
-[![Stargazers over time](https://starchart.cc/DaknamaTv/DarkNamaApp.svg?variant=adaptive)](https://starchart.cc/DaknamaTv/DarkNamaApp)
-
+<p align="center">
+  <img src="darknama-banner2.svg" alt="DarkNama" width="100%"/>
+</p>
 ---
 
 ### 📊 Downloads History
