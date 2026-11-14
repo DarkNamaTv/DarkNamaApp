@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only user-supplied English files in res/font are compiled. Dynamic resource-name
+     lookup needs a keep rule so release shrinking preserves them if added.
+     Optional Inter, Poppins, Montserrat, Nunito and Lato are SIL OFL 1.1;
+     keep original author/copyright notices with any supplied files. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@font/inter_*,@font/poppins_*,@font/montserrat_*,@font/nunito_*,@font/lato_*" />

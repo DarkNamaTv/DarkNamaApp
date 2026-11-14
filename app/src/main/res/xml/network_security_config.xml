@@ -1,25 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Deny all cleartext traffic except for localhost in release builds -->
-    <domain-config cleartextTrafficPermitted="false">
-        <domain includeSubdomains="true">example.com</domain>
-    </domain-config>
-    
-    <!-- Allow cleartext traffic for localhost in all builds -->
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">localhost</domain>
-        <domain includeSubdomains="true">127.0.0.1</domain>
-    </domain-config>
-    
-    <!-- Debug overrides for development - allow all cleartext traffic in debug builds -->
-    <debug-overrides>
-        <trust-anchors>
-            <!-- Trust user added CAs while debuggable only -->
-            <certificates src="user" />
-        </trust-anchors>
-        <!-- Allow cleartext traffic in debug builds -->
-        <domain-config cleartextTrafficPermitted="true">
-            <domain includeSubdomains="true">*</domain>
-        </domain-config>
-    </debug-overrides>
+    <!-- Movie, episode and IPTV URLs come from the catalogue/playlist and may use
+         HTTP on arbitrary media hosts (including redirects and HLS segments).
+         Network Security Config cannot whitelist hosts supplied at runtime.
+         HTTPS is still used whenever the source supplies an HTTPS URL. -->
+    <base-config cleartextTrafficPermitted="true" />
 </network-security-config>
