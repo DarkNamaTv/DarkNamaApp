@@ -3,7 +3,8 @@ package com.dark.darknama.ui.series
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.dark.darknama.data.model.FilterType
 import com.dark.darknama.data.model.Genre
@@ -13,9 +14,9 @@ import com.dark.darknama.data.repository.SeriesRepository
 import com.dark.darknama.utils.LanguageUtils
 import kotlinx.coroutines.launch
 
-class SeriesViewModel : ViewModel() {
-    private val repository = SeriesRepository()
-    private val genreRepository = GenreRepository()
+class SeriesViewModel(application: Application) : AndroidViewModel(application) {
+    private val repository = SeriesRepository(application)
+    private val genreRepository = GenreRepository(application)
     
     var series by mutableStateOf<List<Series>>(emptyList())
         private set

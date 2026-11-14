@@ -2,23 +2,32 @@ package com.dark.darknama.utils
 
 import android.app.UiModeManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.content.res.Resources
-import android.util.DisplayMetrics
 import android.view.WindowManager
 
 object DeviceUtils {
-    /**
-     * Check if the device is a TV
-     */
+    /** Some Android TV boxes advertise Leanback but report a non-TV UI mode. */
     fun isTv(context: Context): Boolean {
-        val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
-        return uiModeManager.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+        val currentMode = (context.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager)
+            ?.currentModeType ?: Configuration.UI_MODE_TYPE_UNDEFINED
+        val features = context.packageManager
+        return isTvEnvironment(
+            context.resources.configuration.uiMode,
+            currentMode,
+            features.hasSystemFeature(PackageManager.FEATURE_LEANBACK),
+            features.hasSystemFeature(PackageManager.FEATURE_TELEVISION)
+        )
     }
-    
-    /**
-     * Check if the device is a tablet
-     */
+
+    /** Separate the decision from Android services so TV and phone cases can be unit tested. */
+    internal fun isTvEnvironment(
+        configurationMode: Int, currentMode: Int, leanback: Boolean, television: Boolean
+    ): Boolean =
+        (configurationMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION ||
+            currentMode == Configuration.UI_MODE_TYPE_TELEVISION || leanback || television
+
+    /** Check if the device is a tablet. Phone/tablet behavior is unchanged. */
     fun isTablet(context: Context): Boolean {
         val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val display = windowManager.defaultDisplay
@@ -30,19 +39,20 @@ object DeviceUtils {
         val smallestWidth = Math.min(dpWidth, dpHeight)
         return smallestWidth >= 600
     }
-    
-    /**
-     * Get the number of grid columns based on screen size and device type
-     */
-    fun getGridColumns(resources: Resources): Int {
+
+    /** Use the same TV decision for navigation, grid width, and layout adaptations. */
+    fun getGridColumns(context: Context): Int {
+        val resources = context.resources
         val displayMetrics = resources.displayMetrics
-        val screenWidthDp = displayMetrics.widthPixels / displayMetrics.density
-        val isTv = resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
-        
-        return when {
-            isTv -> 5 // More columns for TV screens
-            screenWidthDp >= 600 -> 4 // Tablets
-            else -> 2 // Phones
-        }
+        val screenWidthDp = resources.configuration.screenWidthDp.takeIf { it > 0 }
+            ?: (displayMetrics.widthPixels / displayMetrics.density).toInt()
+        return compactGridColumns(screenWidthDp, isTv(context))
+    }
+
+    /** Phones keep their existing layout; TV uses six compact cards on 1080p and 4K. */
+    fun compactGridColumns(widthDp: Int, isTv: Boolean): Int = when {
+        isTv -> 6
+        widthDp >= 600 -> (widthDp / 140).coerceIn(4, 8)
+        else -> 3
     }
 }

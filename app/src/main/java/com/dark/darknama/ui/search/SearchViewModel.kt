@@ -3,20 +3,22 @@ package com.dark.darknama.ui.search
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.dark.darknama.data.model.Country
 import com.dark.darknama.data.model.Poster
 import com.dark.darknama.data.repository.CountryRepository
 import com.dark.darknama.data.repository.SearchRepository
-import com.dark.darknama.utils.LanguageUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-class SearchViewModel : ViewModel() {
-    private val repository = SearchRepository()
-    private val countryRepository = CountryRepository()
+class SearchViewModel(application: Application) : AndroidViewModel(application) {
+    private val repository = SearchRepository(application)
+    private val countryRepository = CountryRepository(application)
     
     var searchResults by mutableStateOf<List<Poster>>(emptyList())
         private set
@@ -47,41 +49,43 @@ class SearchViewModel : ViewModel() {
     }
     
     fun updateSearchQuery(query: String) {
+        if (query == searchQuery) return
+        // Both the TV EditText and the phone field search only on submission.
+        // Do not leave stale results (or a late response to the old query) on screen.
+        searchJob?.cancel()
         searchQuery = query
-        // Don't auto-search anymore - only search when explicitly triggered
-        // Reset search state when query changes
-        if (!hasSearched) {
-            searchResults = emptyList()
-        }
+        searchResults = emptyList()
+        errorMessage = null
+        hasSearched = false
+        isLoading = false
     }
-    
-    // New function to explicitly trigger search
+
     fun triggerSearch() {
-        if (searchQuery.isNotEmpty()) {
+        val query = searchQuery.trim()
+        if (query.isNotEmpty()) {
             hasSearched = true
-            search(searchQuery)
+            search(query)
         }
     }
     
     private fun search(query: String) {
-        viewModelScope.launch {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
             try {
                 isLoading = true
                 errorMessage = null
                 
                 val result = repository.search(query)
                 
-                // Filter out posters with Farsi titles
-                val filteredPosters = result.posters.filter { poster ->
-                    LanguageUtils.shouldDisplayTitle(poster.title)
-                }
-                
-                searchResults = filteredPosters
+                // The repository removes promotional movies; series stay untouched.
+                searchResults = result.posters
+            } catch (e: CancellationException) {
+                throw e // A later query must not surface as an error or overwrite results.
             } catch (e: Exception) {
                 errorMessage = e.message
                 searchResults = emptyList()
             } finally {
-                isLoading = false
+                if (currentCoroutineContext().isActive) isLoading = false
             }
         }
     }
@@ -101,9 +105,11 @@ class SearchViewModel : ViewModel() {
     }
     
     fun clearSearch() {
+        searchJob?.cancel()
         searchQuery = ""
         searchResults = emptyList()
         errorMessage = null
         hasSearched = false
+        isLoading = false
     }
 }

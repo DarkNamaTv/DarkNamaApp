@@ -6,18 +6,30 @@ import com.dark.darknama.data.model.FavoriteChannel
 import com.dark.darknama.data.model.FavoriteGroup
 import com.dark.darknama.data.model.FavoriteItem
 import com.dark.darknama.data.model.Movie
+import com.dark.darknama.data.model.PlaybackKey
+import com.dark.darknama.data.model.PlaybackRecord
 import com.dark.darknama.data.model.Series
+import com.dark.darknama.data.model.SeriesLinkSelection
+import com.dark.darknama.data.model.toSeries
 import com.dark.darknama.data.model.SubtitleSettings
 import com.dark.darknama.data.model.VideoPlayerSettings
 import com.dark.darknama.data.model.FontSettings
+import com.dark.darknama.data.model.FontType
 import com.dark.darknama.data.model.WatchedEpisode
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.Date
 
 object StorageUtils {
     private const val TAG = "StorageUtils"
+    // Older saved media and player preferences may contain fields retired by newer builds.
+    internal val savedJson = Json { ignoreUnknownKeys = true }
     
     // Favorites functions - using a single JSON file for all favorites
     fun saveFavorite(context: Context, favorite: FavoriteItem) {
@@ -84,7 +96,7 @@ object StorageUtils {
             val file = File(context.filesDir, "favorites.json")
             if (file.exists()) {
                 val jsonString = file.readText()
-                Json.decodeFromString<List<FavoriteItem>>(jsonString)
+                savedJson.decodeFromString<List<FavoriteItem>>(jsonString)
             } else {
                 emptyList()
             }
@@ -117,24 +129,7 @@ object StorageUtils {
                     )
                     saveMovieToFile(context, movie)
                 }
-                "series" -> {
-                    // Convert FavoriteItem to Series
-                    val series = Series(
-                        id = favorite.id,
-                        type = favorite.type,
-                        title = favorite.title,
-                        description = favorite.description,
-                        year = favorite.year,
-                        imdb = favorite.imdb,
-                        rating = favorite.rating,
-                        duration = favorite.duration,
-                        image = favorite.image,
-                        cover = favorite.cover,
-                        genres = favorite.genres,
-                        country = favorite.country
-                    )
-                    saveSeriesToFile(context, series)
-                }
+                "series" -> saveSeriesToFile(context, favorite.toSeries())
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error saving favorite to database", e)
@@ -162,7 +157,7 @@ object StorageUtils {
             val file = File(context.filesDir, fileName)
             if (file.exists()) {
                 val jsonString = file.readText()
-                Json.decodeFromString<Movie>(jsonString)
+                savedJson.decodeFromString<Movie>(jsonString)
             } else {
                 null
             }
@@ -463,7 +458,7 @@ object StorageUtils {
             val file = File(context.filesDir, "video_player_settings.json")
             if (file.exists()) {
                 val jsonString = file.readText()
-                Json.decodeFromString<VideoPlayerSettings>(jsonString)
+                savedJson.decodeFromString<VideoPlayerSettings>(jsonString)
             } else {
                 VideoPlayerSettings.DEFAULT
             }
@@ -488,16 +483,27 @@ object StorageUtils {
     fun loadFontSettings(context: Context): FontSettings {
         return try {
             val file = File(context.filesDir, "font_settings.json")
-            if (file.exists()) {
-                val jsonString = file.readText()
-                Json.decodeFromString<FontSettings>(jsonString)
-            } else {
-                FontSettings.DEFAULT
-            }
+            if (file.exists()) readFontSettingsFile(file) else FontSettings.DEFAULT
         } catch (e: Exception) {
             Log.e(TAG, "Error loading font settings from file", e)
             FontSettings.DEFAULT
         }
+    }
+
+    /** Normalize retired Persian selections on disk, retaining the English choice and future keys. */
+    internal fun readFontSettingsFile(file: File): FontSettings {
+        val jsonString = file.readText()
+        val settings = savedJson.decodeFromString<FontSettings>(jsonString)
+        if (settings.fontType == FontType.DEFAULT) {
+            val saved = savedJson.parseToJsonElement(jsonString).jsonObject
+            val name = saved["fontType"]?.jsonPrimitive?.contentOrNull
+            if (name != null && !name.equals(FontType.DEFAULT.name, ignoreCase = true)) {
+                file.writeText(savedJson.encodeToString(
+                    JsonObject(saved + ("fontType" to JsonPrimitive(FontType.DEFAULT.name)))
+                ))
+            }
+        }
+        return settings
     }
     
     // ---------------------------------------------------------------
@@ -593,6 +599,99 @@ object StorageUtils {
         }
     }
     
+    // Persist the series link selector independently from the one-item detail cache.
+    private const val SERIES_LINK_PREFS = "series_link_selections"
+
+    fun loadSeriesLinkSelection(context: Context, seriesId: Int): SeriesLinkSelection = try {
+        val json = context.getSharedPreferences(SERIES_LINK_PREFS, Context.MODE_PRIVATE)
+            .getString(seriesId.toString(), null)
+        if (json == null) SeriesLinkSelection() else Json.decodeFromString<SeriesLinkSelection>(json)
+    } catch (e: Exception) {
+        Log.e(TAG, "Error loading series link selection", e)
+        SeriesLinkSelection()
+    }
+
+    fun saveSeriesLinkSelection(context: Context, seriesId: Int, selection: SeriesLinkSelection) {
+        try {
+            context.getSharedPreferences(SERIES_LINK_PREFS, Context.MODE_PRIVATE).edit()
+                .putString(seriesId.toString(), Json.encodeToString(selection)).apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving series link selection", e)
+        }
+    }
+
+    // Playback history is independent of favorites and the legacy "episode started" marks.
+    private const val PLAYBACK_HISTORY_FILE = "playback_history.json"
+
+    @Synchronized
+    fun loadPlaybackHistory(context: Context): List<PlaybackRecord> = try {
+        val file = File(context.filesDir, PLAYBACK_HISTORY_FILE)
+        if (file.exists()) Json.decodeFromString<List<PlaybackRecord>>(file.readText())
+            .sortedByDescending { it.updatedAt } else emptyList()
+    } catch (e: Exception) {
+        Log.e(TAG, "Error loading playback history", e)
+        emptyList()
+    }
+
+    fun playbackFor(context: Context, key: PlaybackKey): PlaybackRecord? =
+        loadPlaybackHistory(context).firstOrNull { it.key == key }
+
+    /** Called periodically while playing, when paused/closed and at end of media. */
+    @Synchronized
+    fun savePlaybackProgress(
+        context: Context,
+        entry: PlaybackRecord,
+        positionMs: Long,
+        durationMs: Long,
+        ended: Boolean = false
+    ) {
+        if (entry.contentId <= 0 || entry.url.isBlank() ||
+            (entry.type != "movie" && entry.type != "series") ||
+            (entry.type == "series" && (entry.seasonId == null || entry.episodeId == null))
+        ) return
+        try {
+            val position = positionMs.coerceAtLeast(0L)
+            val duration = durationMs.coerceAtLeast(0L)
+            val updated = entry.copy(
+                positionMs = if (duration > 0L) position.coerceAtMost(duration) else position,
+                durationMs = duration,
+                updatedAt = System.currentTimeMillis(),
+                ended = ended
+            )
+            val records = loadPlaybackHistory(context).filterNot { it.key == entry.key }
+            writePlaybackHistory(context, (listOf(updated) + records).sortedByDescending { it.updatedAt })
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving playback progress", e)
+        }
+    }
+
+    @Synchronized
+    fun removePlayback(context: Context, key: PlaybackKey) {
+        try {
+            writePlaybackHistory(context, loadPlaybackHistory(context).filterNot { it.key == key })
+        } catch (e: Exception) {
+            Log.e(TAG, "Error removing playback history entry", e)
+        }
+    }
+
+    @Synchronized
+    fun clearPlaybackHistory(context: Context) {
+        File(context.filesDir, PLAYBACK_HISTORY_FILE).delete()
+        File(context.filesDir, "$PLAYBACK_HISTORY_FILE.tmp").delete()
+    }
+
+    private fun writePlaybackHistory(context: Context, records: List<PlaybackRecord>) {
+        val file = File(context.filesDir, PLAYBACK_HISTORY_FILE)
+        val temporary = File(context.filesDir, "$PLAYBACK_HISTORY_FILE.tmp")
+        val json = Json.encodeToString(records)
+        temporary.writeText(json)
+        // An interrupted write must leave the previous history readable.
+        if (!temporary.renameTo(file)) {
+            file.writeText(json)
+            temporary.delete()
+        }
+    }
+
     // Watched episodes functions
     fun saveWatchedEpisode(context: Context, watchedEpisode: WatchedEpisode) {
         try {

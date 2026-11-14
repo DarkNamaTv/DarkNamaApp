@@ -6,7 +6,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.edit
 
@@ -16,8 +15,9 @@ class ThemeManager(private val context: Context) {
     fun saveThemeSettings(settings: ThemeSettings) {
         prefs.edit {
             putString("theme_mode", settings.themeMode.name)
-            putInt("primary_color", settings.primaryColor.toArgb())
-            // Removed secondary_color as it's no longer used
+            putInt("primary_color", supportedThemeColor(settings.primaryColor).toArgb())
+            putInt("secondary_color", supportedThemeColor(settings.secondaryColor).toArgb())
+            putString("visual_style", settings.style.name)
         }
     }
     
@@ -29,13 +29,22 @@ class ThemeManager(private val context: Context) {
             ThemeMode.SYSTEM
         }
         
-        val primaryColor = prefs.getInt("primary_color", defaultPrimaryColor.toArgb())
-        // Removed secondary_color as it's no longer used
-        
+        // getInt throws for older string-based selections. Read the raw values
+        // so both an old ARGB and an old color name can be normalized in place.
+        val stored = prefs.all
+        val (primary, secondary) = normalizeStoredThemeColors(
+            stored["primary_color"], stored["secondary_color"]
+        ) { primaryArgb, secondaryArgb ->
+            prefs.edit {
+                putInt("primary_color", primaryArgb)
+                putInt("secondary_color", secondaryArgb)
+            }
+        }
         return ThemeSettings(
             themeMode = themeMode,
-            primaryColor = Color(primaryColor)
-            // Removed secondaryColor as it's no longer used
+            primaryColor = primary,
+            secondaryColor = secondary,
+            style = VisualStyle.fromStored(prefs.getString("visual_style", null))
         )
     }
 }
